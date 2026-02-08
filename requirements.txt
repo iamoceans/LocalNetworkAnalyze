@@ -1,0 +1,13 @@
+# Core dependencies
+scapy>=2.5.0
+customtkinter>=5.2.0
+matplotlib>=3.7.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# Optional: high-performance packet capture
+# pcapy-ng>=0.1.0
+
+# Data export (built-in alternatives preferred)
+# No external dependencies for CSV/JSON

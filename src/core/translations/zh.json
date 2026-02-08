@@ -1,0 +1,101 @@
+{
+  "app": {
+    "name": "局域网分析器",
+    "subtitle": "监控和分析您的本地网络流量"
+  },
+  "navigation": {
+    "dashboard": "仪表板",
+    "capture": "捕获",
+    "scan": "扫描",
+    "analysis": "分析",
+    "alerts": "告警",
+    "exit": "退出",
+    "language": "语言"
+  },
+  "dashboard": {
+    "title": "网络仪表板",
+    "statistics": "流量统计",
+    "total_packets": "总数据包",
+    "total_bytes": "总字节数",
+    "packet_rate": "数据包速率",
+    "byte_rate": "字节速率",
+    "active_connections": "活动连接",
+    "recent_alerts": "最近告警",
+    "protocol_distribution": "协议分布",
+    "top_connections": "热门连接",
+    "no_recent_alerts": "无最近告警"
+  },
+  "capture": {
+    "title": "数据包捕获",
+    "settings": "捕获设置",
+    "interface": "接口：",
+    "filter": "过滤器 (BPF)：",
+    "refresh": "刷新",
+    "start_capture": "开始捕获",
+    "stop": "停止",
+    "clear": "清除",
+    "save": "保存",
+    "packets": "数据包",
+    "ready": "就绪",
+    "captured_packets": "已捕获数据包"
+  },
+  "scan": {
+    "title": "网络扫描",
+    "target": "目标：",
+    "scan_type": "扫描类型：",
+    "port_scan": "端口扫描",
+    "host_discovery": "主机发现",
+    "start_scan": "开始扫描",
+    "results": "扫描结果",
+    "scanning": "扫描中..."
+  },
+  "analysis": {
+    "title": "流量分析",
+    "filter": "筛选",
+    "apply": "应用",
+    "export": "导出",
+    "results": "分析结果",
+    "time_range": "时间范围：",
+    "source_ip": "源 IP：",
+    "destination_ip": "目标 IP：",
+    "protocol": "协议："
+  },
+  "alerts": {
+    "title": "安全告警",
+    "severity": "严重程度",
+    "type": "类型",
+    "timestamp": "时间",
+    "acknowledged": "已确认",
+    "acknowledge": "确认",
+    "delete": "删除",
+    "filter": "筛选告警",
+    "all_severities": "全部等级",
+    "high": "高",
+    "medium": "中",
+    "low": "低"
+  },
+  "status": {
+    "ready": "就绪",
+    "capturing": "正在 {interface} 上捕获",
+    "stopped": "捕获已停止",
+    "error": "错误：{message}",
+    "saved": "已保存 {count} 个数据包到数据库",
+    "scanning": "正在扫描 {target}...",
+    "scan_complete": "扫描完成"
+  },
+  "language": {
+    "english": "English",
+    "chinese": "中文",
+    "switch_confirm": "切换到{lang}？",
+    "switching": "正在切换语言..."
+  },
+  "protocol": {
+    "tcp": "TCP",
+    "udp": "UDP",
+    "icmp": "ICMP",
+    "http": "HTTP",
+    "https": "HTTPS",
+    "dns": "DNS",
+    "other": "其他"
+  }
+}

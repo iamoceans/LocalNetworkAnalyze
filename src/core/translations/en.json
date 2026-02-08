@@ -1,0 +1,101 @@
+{
+  "app": {
+    "name": "Local Network Analyzer",
+    "subtitle": "Monitor and analyze your local network traffic"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "capture": "Capture",
+    "scan": "Scan",
+    "analysis": "Analysis",
+    "alerts": "Alerts",
+    "exit": "Exit",
+    "language": "Language"
+  },
+  "dashboard": {
+    "title": "Network Dashboard",
+    "statistics": "Traffic Statistics",
+    "total_packets": "Total Packets",
+    "total_bytes": "Total Bytes",
+    "packet_rate": "Packet Rate",
+    "byte_rate": "Byte Rate",
+    "active_connections": "Active Connections",
+    "recent_alerts": "Recent Alerts",
+    "protocol_distribution": "Protocol Distribution",
+    "top_connections": "Top Connections",
+    "no_recent_alerts": "No recent alerts"
+  },
+  "capture": {
+    "title": "Packet Capture",
+    "settings": "Capture Settings",
+    "interface": "Interface:",
+    "filter": "Filter (BPF):",
+    "refresh": "Refresh",
+    "start_capture": "Start Capture",
+    "stop": "Stop",
+    "clear": "Clear",
+    "save": "Save",
+    "packets": "Packets",
+    "ready": "Ready",
+    "captured_packets": "Captured Packets"
+  },
+  "scan": {
+    "title": "Network Scan",
+    "target": "Target:",
+    "scan_type": "Scan Type:",
+    "port_scan": "Port Scan",
+    "host_discovery": "Host Discovery",
+    "start_scan": "Start Scan",
+    "results": "Scan Results",
+    "scanning": "Scanning..."
+  },
+  "analysis": {
+    "title": "Traffic Analysis",
+    "filter": "Filter",
+    "apply": "Apply",
+    "export": "Export",
+    "results": "Analysis Results",
+    "time_range": "Time Range:",
+    "source_ip": "Source IP:",
+    "destination_ip": "Destination IP:",
+    "protocol": "Protocol:"
+  },
+  "alerts": {
+    "title": "Security Alerts",
+    "severity": "Severity",
+    "type": "Type",
+    "timestamp": "Time",
+    "acknowledged": "Acknowledged",
+    "acknowledge": "Acknowledge",
+    "delete": "Delete",
+    "filter": "Filter Alerts",
+    "all_severities": "All Severities",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low"
+  },
+  "status": {
+    "ready": "Ready",
+    "capturing": "Capturing on {interface}",
+    "stopped": "Capture stopped",
+    "error": "Error: {message}",
+    "saved": "Saved {count} packets to database",
+    "scanning": "Scanning {target}...",
+    "scan_complete": "Scan complete"
+  },
+  "language": {
+    "english": "English",
+    "chinese": "中文",
+    "switch_confirm": "Switch language to {lang}?",
+    "switching": "Switching language..."
+  },
+  "protocol": {
+    "tcp": "TCP",
+    "udp": "UDP",
+    "icmp": "ICMP",
+    "http": "HTTP",
+    "https": "HTTPS",
+    "dns": "DNS",
+    "other": "Other"
+  }
+}
