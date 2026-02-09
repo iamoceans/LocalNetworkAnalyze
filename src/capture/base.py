@@ -56,6 +56,8 @@ class PacketInfo:
         interface: Network interface where packet was captured
         mac_src: Source MAC address (optional)
         mac_dst: Destination MAC address (optional)
+        url: Extracted URL from HTTP/HTTPS requests (optional)
+        host: HTTP Host header value (optional)
     """
     timestamp: datetime
     src_ip: str
@@ -68,6 +70,8 @@ class PacketInfo:
     interface: str = ""
     mac_src: Optional[str] = None
     mac_dst: Optional[str] = None
+    url: Optional[str] = None
+    host: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate packet information."""

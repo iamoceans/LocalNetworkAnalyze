@@ -28,7 +28,7 @@ class TrafficSnapshot:
         packets_per_second: Packet rate
         bytes_per_second: Byte rate
         protocol_stats: Dictionary of protocol -> counts
-        top_connections: Top connections by packet count
+        top_connections: Top connections details (list of dicts)
         top_talkers: Top IPs by bytes transferred
     """
     timestamp: datetime
@@ -37,7 +37,7 @@ class TrafficSnapshot:
     packets_per_second: float
     bytes_per_second: float
     protocol_stats: Dict[str, int]
-    top_connections: List[Tuple[str, str, int]]  # (src_ip, dst_ip, count)
+    top_connections: List[Dict]  # Changed from List[Tuple] to List[Dict]
     top_talkers: List[Tuple[str, int]]  # (ip, bytes)
 
     def to_dict(self) -> dict:
@@ -314,40 +314,77 @@ class TrafficStatistics:
 
         return 0.0
 
-    def _get_top_connections(self) -> List[Tuple[str, str, int]]:
+    def _get_top_connections(self) -> List[Dict]:
         """Get top connections by packet count.
 
         Returns:
-            List of (src_ip, dst_ip, packet_count) tuples
+            List of connection dictionaries with full details
         """
         with self._connections_lock:
-            # Group by bidirectional connections
-            bidi_counts: Dict[Tuple[str, str], int] = defaultdict(int)
+            # Group by bidirectional connections and sum counts
+            # We also need to keep track of a representative connection object to get ports/protocol
+            bidi_stats: Dict[Tuple[str, str], Dict] = {}
 
             for conn in self._connections.values():
-                key = (conn.src_ip, conn.dst_ip)
-                bidi_counts[key] += conn.total_packets
+                # Normalize key to ensure bidirectional grouping
+                if conn.src_ip < conn.dst_ip:
+                    key = (conn.src_ip, conn.dst_ip)
+                else:
+                    key = (conn.dst_ip, conn.src_ip)
+                
+                if key not in bidi_stats:
+                    bidi_stats[key] = {
+                        "src_ip": conn.src_ip,
+                        "dst_ip": conn.dst_ip,
+                        "src_port": conn.src_port,
+                        "dst_port": conn.dst_port,
+                        "protocol": conn.protocol,
+                        "total_packets": 0,
+                        "total_bytes": 0
+                    }
+                
+                bidi_stats[key]["total_packets"] += conn.total_packets
+                bidi_stats[key]["total_bytes"] += conn.total_bytes
 
-            # Get top N
+            # Get top N based on packet count
             sorted_connections = sorted(
-                bidi_counts.items(),
-                key=lambda x: x[1],
+                bidi_stats.values(),
+                key=lambda x: x["total_packets"],
                 reverse=True,
             )[:self._top_n]
 
-            return [(src, dst, count) for (src, dst), count in sorted_connections]
+            return sorted_connections
 
-    def _get_top_talkers(self) -> List[Tuple[str, int]]:
+    def get_top_talkers(self, limit: int = 10, time_window: Optional[float] = None) -> List[Tuple[str, int]]:
         """Get top talkers by bytes transferred.
+
+        Args:
+            limit: Maximum number of talkers to return
+            time_window: Time window in seconds (None for all time)
 
         Returns:
             List of (ip, bytes) tuples
         """
         # Aggregate bytes by IP
         ip_bytes: Dict[str, int] = defaultdict(int)
+        
+        now = datetime.now()
 
         with self._connections_lock:
             for conn in self._connections.values():
+                # Filter by time window if specified
+                # Note: This logic assumes conn.last_seen represents the time of activity.
+                # For long-running connections, this might include older bytes if we sum total_bytes.
+                # However, for "top talkers in last hour", using total_bytes of connections active
+                # in the last hour is a reasonable approximation given current data structure.
+                # To be perfectly precise, we would need time-series data for each connection,
+                # which is computationally expensive.
+                
+                if time_window is not None:
+                    elapsed = (now - conn.last_seen).total_seconds()
+                    if elapsed > time_window:
+                        continue
+                        
                 ip_bytes[conn.src_ip] += conn.total_bytes
                 ip_bytes[conn.dst_ip] += conn.total_bytes
 
@@ -356,9 +393,17 @@ class TrafficStatistics:
             ip_bytes.items(),
             key=lambda x: x[1],
             reverse=True,
-        )[:self._top_n]
+        )[:limit]
 
         return sorted_ips
+
+    def _get_top_talkers(self) -> List[Tuple[str, int]]:
+        """Get top talkers by bytes transferred (internal use).
+
+        Returns:
+            List of (ip, bytes) tuples
+        """
+        return self.get_top_talkers(self._top_n)
 
     def get_protocol_distribution(self) -> Dict[str, float]:
         """Get protocol distribution as percentages.

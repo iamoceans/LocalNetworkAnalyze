@@ -6,7 +6,7 @@ selecting interfaces, setting filters, and viewing captured packets.
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import threading
@@ -20,13 +20,18 @@ except ImportError:
     import tkinter as ctk
 
 from src.core.logger import get_logger
+from src.core.exceptions import CaptureError
 from src.capture.base import PacketCapture, PacketInfo
 from src.storage import DatabaseManager
+from src.capture import create_capture as create_packet_capture
 
+
+from src.analysis import AnalysisEngine
+from src.detection import DetectionEngine
 
 class CapturePanel:
     """Panel for packet capture control and display.
-
+    
     Provides interface for:
     - Starting/stopping capture
     - Interface selection
@@ -38,6 +43,8 @@ class CapturePanel:
         self,
         parent,
         capture: Optional[PacketCapture] = None,
+        analysis: Optional[AnalysisEngine] = None,
+        detection: Optional[DetectionEngine] = None,
         database: Optional[DatabaseManager] = None,
     ) -> None:
         """Initialize capture panel.
@@ -45,10 +52,14 @@ class CapturePanel:
         Args:
             parent: Parent widget
             capture: Packet capture engine
+            analysis: Analysis engine
+            detection: Detection engine
             database: Database manager
         """
         self._parent = parent
         self._capture = capture
+        self._analysis = analysis
+        self._detection = detection
         self._database = database
         self._logger = get_logger(__name__)
 
@@ -56,6 +67,7 @@ class CapturePanel:
         self._is_capturing = False
         self._selected_interface = None
         self._capture_filter = ""
+        self._interface_map: Dict[str, str] = {}
 
         # Packet display queue (thread-safe)
         self._packet_queue: queue.Queue = queue.Queue(maxsize=1000)
@@ -97,6 +109,11 @@ class CapturePanel:
             self._frame = ttk.Frame(self._parent)
 
         self._frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Ensure minimum size for control frame visibility
+        self._frame.grid_rowconfigure(0, weight=0) # Header
+        self._frame.grid_rowconfigure(1, weight=0) # Controls
+        self._frame.grid_rowconfigure(2, weight=1) # Packets (expandable)
 
         # Create sections
         self._create_header()
@@ -140,8 +157,8 @@ class CapturePanel:
             ttk.Label(intf_frame, text="Interface:").pack(side="left")
 
             self._interface_var = tk.StringVar()
-            intf_combo = ttk.Combobox(intf_frame, textvariable=self._interface_var, state="readonly")
-            intf_combo.pack(side="left", padx=5)
+            self._interface_combo = ttk.Combobox(intf_frame, textvariable=self._interface_var, state="readonly")
+            self._interface_combo.pack(side="left", padx=5)
 
             # Filter
             filter_frame = ttk.Frame(self._control_frame)
@@ -203,9 +220,12 @@ class CapturePanel:
         self._interface_var = ctk.StringVar()
         self._interface_combo = ctk.CTkComboBox(
             intf_frame,
-            variable=self._interface_var,
             width=200,
+            values=[],
+            command=lambda v: self._interface_var.set(v),
         )
+        # Manually set variable logic since 'variable' param is not supported in this CTk version
+        self._interface_var.trace_add("write", lambda *args: self._interface_combo.set(self._interface_var.get()))
         self._interface_combo.pack(side="left", padx=5)
 
         # Refresh button
@@ -230,7 +250,7 @@ class CapturePanel:
         self._filter_var = ctk.StringVar(value="")
         filter_entry = ctk.CTkEntry(
             filter_frame,
-            variable=self._filter_var,
+            textvariable=self._filter_var,
             placeholder_text="e.g., tcp port 80",
         )
         filter_entry.pack(side="left", fill="x", expand=True, padx=5)
@@ -302,13 +322,20 @@ class CapturePanel:
             self._packet_frame = ttk.LabelFrame(self._frame, text="Captured Packets")
             self._packet_frame.pack(fill="both", expand=True)
 
-            # Create treeview
-            columns = ("Time", "Source", "Destination", "Protocol", "Length")
+            # Create treeview with URL column
+            columns = ("Time", "Source", "Destination", "Protocol", "URL/Host", "Length")
             self._packet_tree = ttk.Treeview(self._packet_frame, columns=columns, show="headings")
+
+            # Set column widths
+            self._packet_tree.column("Time", width=80)
+            self._packet_tree.column("Source", width=150)
+            self._packet_tree.column("Destination", width=150)
+            self._packet_tree.column("Protocol", width=80)
+            self._packet_tree.column("URL/Host", width=250)
+            self._packet_tree.column("Length", width=80)
 
             for col in columns:
                 self._packet_tree.heading(col, text=col)
-                self._packet_tree.column(col, width=120)
 
             # Scrollbar
             scrollbar = ttk.Scrollbar(self._packet_frame, orient="vertical", command=self._packet_tree.yview)
@@ -338,12 +365,19 @@ class CapturePanel:
         tree_frame = ttk.Frame(self._packet_frame)
         tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        columns = ("Time", "Source", "Destination", "Protocol", "Length")
+        columns = ("Time", "Source", "Destination", "Protocol", "URL/Host", "Length")
         self._packet_tree = ttk.Treeview(tree_frame, columns=columns, show="headings")
+
+        # Set column widths
+        self._packet_tree.column("Time", width=80)
+        self._packet_tree.column("Source", width=150)
+        self._packet_tree.column("Destination", width=150)
+        self._packet_tree.column("Protocol", width=80)
+        self._packet_tree.column("URL/Host", width=250)
+        self._packet_tree.column("Length", width=80)
 
         for col in columns:
             self._packet_tree.heading(col, text=col)
-            self._packet_tree.column(col, width=120)
 
         scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self._packet_tree.yview)
         self._packet_tree.configure(yscrollcommand=scrollbar.set)
@@ -358,27 +392,47 @@ class CapturePanel:
         try:
             if self._capture:
                 interfaces_data = self._capture.get_interfaces()
-
-                # Extract interface names for dropdown
-                if interfaces_data:
-                    # Check if interfaces are dicts or strings
-                    if interfaces_data and isinstance(interfaces_data[0], dict):
-                        interface_names = [iface["name"] for iface in interfaces_data]
+                self._interface_map.clear()
+                
+                display_names = []
+                for iface in interfaces_data:
+                    # Create user friendly name: "Description (IP)"
+                    name = iface["name"]
+                    desc = iface.get("description", name)
+                    ip = iface.get("address", "")
+                    
+                    if ip:
+                        display_name = f"{desc} ({ip})"
                     else:
-                        interface_names = interfaces_data
-                else:
-                    interface_names = []
+                        display_name = desc
+                        
+                    # Handle duplicate display names or make sure unique
+                    if display_name in self._interface_map:
+                        display_name = f"{display_name} [{name}]"
+                        
+                    self._interface_map[display_name] = name
+                    display_names.append(display_name)
 
                 if CUSTOMTKINTER_AVAILABLE:
-                    self._interface_combo.configure(values=interface_names)
-                    if interface_names and not self._interface_var.get():
-                        self._interface_var.set(interface_names[0])
+                    self._interface_combo.configure(values=display_names)
+                    if display_names:
+                        # Try to select the first one if nothing selected
+                        if not self._interface_var.get():
+                            self._interface_var.set(display_names[0])
+                            self._interface_combo.set(display_names[0])
+                        # Or if current selection is invalid
+                        elif self._interface_var.get() not in display_names:
+                             self._interface_var.set(display_names[0])
+                             self._interface_combo.set(display_names[0])
                 else:
-                    self._interface_combo['values'] = interface_names
-                    if interface_names and not self._interface_var.get():
-                        self._interface_var.set(interface_names[0])
+                    self._interface_combo['values'] = display_names
+                    if display_names:
+                        if not self._interface_var.get():
+                            self._interface_var.set(display_names[0])
+                        elif self._interface_var.get() not in display_names:
+                            self._interface_var.set(display_names[0])
 
-                self._logger.info(f"Loaded {len(interface_names)} interfaces")
+                self._logger.info(f"Loaded {len(display_names)} interfaces")
 
         except Exception as e:
             self._logger.error(f"Error refreshing interfaces: {e}")
@@ -386,22 +440,41 @@ class CapturePanel:
     def start_capture(self) -> None:
         """Start packet capture."""
         try:
-            if not self._capture:
-                self._update_status("No capture engine available")
-                return
-
             # Get interface
-            interface = self._interface_var.get()
-            if not interface:
+            selection = self._interface_var.get()
+            if not selection:
                 self._update_status("Please select an interface")
                 return
+
+            # Resolve display name to actual interface name
+            interface = self._interface_map.get(selection, selection)
 
             # Get filter
             capture_filter = self._filter_var.get().strip()
 
-            # Start capture
-            self._capture.set_callback(self._on_packet_captured)
-            self._capture.start_capture(interface=interface, filter=capture_filter)
+            # Create new capture instance with selected interface and filter
+            # Store the original capture to restore later if needed
+            if not hasattr(self, '_original_capture'):
+                self._original_capture = self._capture
+
+            # Create new capture with specified interface and filter
+            self._capture = create_packet_capture(
+                backend="scapy",
+                interface=interface,
+                filter=capture_filter,
+            )
+
+            # Wire up callbacks
+            self._capture.add_callback(self._on_packet_captured)
+
+            # Explicitly wire up analysis and detection engines
+            if self._analysis:
+                self._capture.add_callback(self._analysis.update)
+            if self._detection:
+                self._capture.add_callback(self._detection.process)
+
+            # Start capture (no arguments needed, interface and filter are set in __init__)
+            self._capture.start_capture()
 
             self._is_capturing = True
             self._selected_interface = interface
@@ -416,10 +489,43 @@ class CapturePanel:
             self._update_status(f"Capturing on {interface}")
             self._start_updates()
 
+            # Save capture state to main window for panel switching
+            self._save_state_to_main_window()
+
             self._logger.info(f"Capture started on {interface}")
+
+        except CaptureError as e:
+            self._logger.error(f"Capture error: {e}")
+            msg = str(e)
+
+            # Build detailed error message for messagebox
+            error_details = []
+            if hasattr(e, 'details') and e.details:
+                if "suggestion" in e.details:
+                    error_details.append(f"\n\nSolution:\n{e.details['suggestion']}")
+                if "troubleshooting" in e.details:
+                    error_details.append(f"\n\nTroubleshooting:\n{e.details['troubleshooting']}")
+                if "additional_suggestions" in e.details:
+                    for suggestion in e.details['additional_suggestions']:
+                        error_details.append(f"\n- {suggestion}")
+
+            full_error = msg + "".join(error_details)
+
+            # Show messagebox for important errors
+            self._show_error_message("Capture Error", full_error)
+
+            self._update_status(msg + " - See details")
+
+            # Reset UI state
+            self._is_capturing = False
+            if self._start_button:
+                self._start_button.configure(state="normal")
+            if self._stop_button:
+                self._stop_button.configure(state="disabled")
 
         except Exception as e:
             self._logger.error(f"Error starting capture: {e}")
+            self._show_error_message("Unexpected Error", f"An unexpected error occurred:\n\n{e}")
             self._update_status(f"Error: {e}")
 
     def stop_capture(self) -> None:
@@ -438,6 +544,9 @@ class CapturePanel:
 
             self._update_status("Capture stopped")
             self._stop_updates()
+
+            # Clear saved state from main window
+            self._clear_state_from_main_window()
 
             self._logger.info("Capture stopped")
 
@@ -514,18 +623,20 @@ class CapturePanel:
         """Stop periodic UI updates."""
         self._is_updating = False
         if self._update_timer:
-            self._update_timer.cancel()
+            if self._frame:
+                try:
+                    self._frame.after_cancel(self._update_timer)
+                except Exception:
+                    pass
             self._update_timer = None
 
     def _schedule_update(self) -> None:
         """Schedule next UI update."""
-        if self._is_updating:
-            self._update_timer = threading.Timer(
-                0.1,  # 100ms
+        if self._is_updating and self._frame:
+            self._update_timer = self._frame.after(
+                100,  # 100ms
                 self._update_packet_display,
             )
-            self._update_timer.daemon = True
-            self._update_timer.start()
 
     def _update_packet_display(self) -> None:
         """Update packet display from queue."""
@@ -562,6 +673,8 @@ class CapturePanel:
             "dst_port": packet.dst_port,
             "protocol": packet.protocol,
             "length": packet.length,
+            "url": packet.url,
+            "host": packet.host,
         }
 
         # Add to list
@@ -577,11 +690,25 @@ class CapturePanel:
             src = f"{packet.src_ip}:{packet.src_port}" if packet.src_port else packet.src_ip
             dst = f"{packet.dst_ip}:{packet.dst_port}" if packet.dst_port else packet.dst_ip
 
+            # Determine URL/Host display
+            url_display = ""
+            if packet.url:
+                # Show full URL
+                url_display = packet.url
+                # Truncate if too long
+                if len(url_display) > 40:
+                    url_display = url_display[:37] + "..."
+            elif packet.host:
+                url_display = packet.host
+            elif packet.dst_port in (80, 443):
+                url_display = "(encrypted/no host)"
+
             self._packet_tree.insert("", 0, values=(
                 time_str,
                 src,
                 dst,
                 packet.protocol,
+                url_display,
                 packet.length,
             ))
 
@@ -604,6 +731,19 @@ class CapturePanel:
         if self._status_var:
             self._status_var.set(message)
 
+    def _show_error_message(self, title: str, message: str) -> None:
+        """Show error message in a messagebox.
+
+        Args:
+            title: Dialog title
+            message: Error message to display
+        """
+        try:
+            messagebox.showerror(title, message, parent=self._frame)
+        except Exception:
+            # Fallback if messagebox fails (e.g., during early initialization)
+            self._logger.error(f"{title}: {message}")
+
     def _on_packet_select(self, event) -> None:
         """Handle packet selection in treeview.
 
@@ -612,6 +752,153 @@ class CapturePanel:
         """
         # Could show packet details in a popup or side panel
         pass
+
+    def _get_main_window(self):
+        """Get the main window instance by traversing up the widget hierarchy.
+
+        Returns:
+            MainWindow instance or None
+        """
+        try:
+            current = self._parent
+            while current:
+                if hasattr(current, '_active_capture_state'):
+                    return current
+                current = current.master if hasattr(current, 'master') else None
+        except Exception:
+            pass
+        return None
+
+    def _save_state_to_main_window(self) -> None:
+        """Save current capture state to main window."""
+        main_window = self._get_main_window()
+        if main_window:
+            state = self.save_capture_state()
+            if state:
+                main_window._active_capture_state = state
+                self._logger.debug("Saved capture state to main window")
+
+    def _clear_state_from_main_window(self) -> None:
+        """Clear capture state from main window."""
+        main_window = self._get_main_window()
+        if main_window and hasattr(main_window, '_active_capture_state'):
+            main_window._active_capture_state = None
+            self._logger.debug("Cleared capture state from main window")
+
+    def save_capture_state(self) -> Optional[Dict[str, Any]]:
+        """Handle packet selection in treeview.
+
+        Args:
+            event: Selection event
+        """
+        # Could show packet details in a popup or side panel
+        pass
+
+    def save_capture_state(self) -> Optional[Dict[str, Any]]:
+        """Save current capture state for restoration later.
+
+        Returns:
+            Dictionary with capture state, or None if not capturing
+        """
+        if not self._is_capturing or not self._capture:
+            return None
+
+        return {
+            'is_capturing': True,
+            'capture': self._capture,
+            'selected_interface': self._selected_interface,
+            'capture_filter': self._capture_filter,
+            'displayed_packets': self._displayed_packets.copy(),
+        }
+
+    def restore_capture_state(self, state: Dict[str, Any]) -> None:
+        """Restore capture state from previous panel instance.
+
+        Args:
+            state: Previously saved capture state
+        """
+        if not state or not state.get('is_capturing'):
+            return
+
+        try:
+            # Restore the active capture object
+            self._capture = state['capture']
+            self._is_capturing = True
+            self._selected_interface = state.get('selected_interface')
+            self._capture_filter = state.get('capture_filter', '')
+
+            # Restore displayed packets
+            self._displayed_packets = state.get('displayed_packets', [])
+
+            # Re-wire callbacks
+            self._capture.add_callback(self._on_packet_captured)
+            if self._analysis:
+                self._capture.add_callback(self._analysis.update)
+            if self._detection:
+                self._capture.add_callback(self._detection.process)
+
+            # Restore filter value in UI
+            if self._filter_var and self._capture_filter:
+                self._filter_var.set(self._capture_filter)
+
+            # Update UI state
+            if self._start_button:
+                self._start_button.configure(state="disabled")
+            if self._stop_button:
+                self._stop_button.configure(state="normal")
+
+            # Update status
+            self._update_status(f"Capturing on {self._selected_interface}")
+
+            # Restore packet display
+            if hasattr(self, '_packet_tree'):
+                # Clear existing items
+                for item in self._packet_tree.get_children():
+                    self._packet_tree.delete(item)
+
+                # Restore displayed packets
+                for packet_data in self._displayed_packets:
+                    time_str = packet_data.get('timestamp', '')
+                    if isinstance(time_str, str):
+                        from datetime import datetime
+                        try:
+                            dt = datetime.fromisoformat(time_str)
+                            time_str = dt.strftime("%H:%M:%S")
+                        except:
+                            time_str = time_str[:8]
+
+                    src = f"{packet_data['src_ip']}:{packet_data['src_port']}" if packet_data.get('src_port') else packet_data['src_ip']
+                    dst = f"{packet_data['dst_ip']}:{packet_data['dst_port']}" if packet_data.get('dst_port') else packet_data['dst_ip']
+
+                    # Determine URL/Host display
+                    url_display = ""
+                    url = packet_data.get('url')
+                    host = packet_data.get('host')
+                    if url:
+                        url_display = url
+                        if len(url_display) > 40:
+                            url_display = url_display[:37] + "..."
+                    elif host:
+                        url_display = host
+                    elif packet_data.get('dst_port') in (80, 443):
+                        url_display = "(encrypted/no host)"
+
+                    self._packet_tree.insert("", 0, values=(
+                        time_str,
+                        src,
+                        dst,
+                        packet_data['protocol'],
+                        url_display,
+                        packet_data['length'],
+                    ))
+
+            self._update_packet_count()
+            self._start_updates()
+
+            self._logger.info(f"Restored capture state for {self._selected_interface}")
+
+        except Exception as e:
+            self._logger.error(f"Error restoring capture state: {e}")
 
     def destroy(self) -> None:
         """Clean up capture panel resources."""
@@ -630,6 +917,8 @@ class CapturePanel:
 def create_capture_panel(
     parent,
     capture: Optional[PacketCapture] = None,
+    analysis: Optional[AnalysisEngine] = None,
+    detection: Optional[DetectionEngine] = None,
     database: Optional[DatabaseManager] = None,
 ) -> CapturePanel:
     """Create capture panel instance.
@@ -637,6 +926,8 @@ def create_capture_panel(
     Args:
         parent: Parent widget
         capture: Packet capture engine
+        analysis: Analysis engine
+        detection: Detection engine
         database: Database manager
 
     Returns:
@@ -645,6 +936,8 @@ def create_capture_panel(
     return CapturePanel(
         parent=parent,
         capture=capture,
+        analysis=analysis,
+        detection=detection,
         database=database,
     )
 

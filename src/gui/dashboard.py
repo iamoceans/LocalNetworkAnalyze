@@ -81,6 +81,7 @@ class DashboardPanel:
         self._protocol_frame: Optional[tk.Frame] = None
         self._connections_frame: Optional[tk.Frame] = None
         self._alerts_frame: Optional[tk.Frame] = None
+        self._websites_frame: Optional[tk.Frame] = None
 
         self._logger.info("Dashboard panel initialized")
 
@@ -222,8 +223,8 @@ class DashboardPanel:
         ]
 
         for i, (label, icon, _) in enumerate(stats):
-            card = ctk.CTkFrame(grid, corner_radius=8)
-            card.grid(row=i//3, column=i%3, padx=5, pady=5, sticky="nsew")
+            card = ctk.CTkFrame(grid)
+            card.grid(row=i//3, column=i%3, padx=10, pady=10, sticky="nsew")
 
             # Icon and label
             header = ctk.CTkFrame(card, fg_color="transparent")
@@ -306,17 +307,21 @@ class DashboardPanel:
         self._connections_frame = ctk.CTkFrame(left)
         self._connections_frame.pack(fill="both", expand=True)
 
-        # Right column
+        # Right column - Alerts and Top Websites
         right = ctk.CTkFrame(content, fg_color="transparent")
         right.pack(side="right", fill="both", expand=True, padx=(5, 0))
 
         self._alerts_frame = ctk.CTkFrame(right)
-        self._alerts_frame.pack(fill="both", expand=True)
+        self._alerts_frame.pack(fill="both", expand=True, pady=(0, 5))
+
+        self._websites_frame = ctk.CTkFrame(right)
+        self._websites_frame.pack(fill="both", expand=True)
 
         # Add titles
         self._add_frame_title(self._protocol_frame, "Protocol Distribution")
         self._add_frame_title(self._connections_frame, "Top Connections")
         self._add_frame_title(self._alerts_frame, "Recent Alerts")
+        self._add_frame_title(self._websites_frame, "Top Visited Websites")
 
     def _add_frame_title(self, frame: tk.Frame, title: str) -> None:
         """Add title to frame."""
@@ -337,18 +342,20 @@ class DashboardPanel:
         """Stop periodic updates."""
         self._is_updating = False
         if self._update_timer:
-            self._update_timer.cancel()
+            if self._frame:
+                try:
+                    self._frame.after_cancel(self._update_timer)
+                except Exception:
+                    pass
             self._update_timer = None
 
     def _schedule_update(self) -> None:
         """Schedule next update."""
-        if self._is_updating:
-            self._update_timer = threading.Timer(
-                self._update_interval,
+        if self._is_updating and self._frame:
+            self._update_timer = self._frame.after(
+                int(self._update_interval * 1000),
                 self._update_display,
             )
-            self._update_timer.daemon = True
-            self._update_timer.start()
 
     def _update_display(self) -> None:
         """Update dashboard display with latest data."""
@@ -375,6 +382,7 @@ class DashboardPanel:
             self._update_protocol_panel()
             self._update_connections_panel()
             self._update_alerts_panel()
+            self._update_websites_panel()
 
         except Exception as e:
             self._logger.error(f"Error updating dashboard: {e}")
@@ -504,8 +512,8 @@ class DashboardPanel:
             return
 
         # CustomTkinter protocol item
-        item = ctk.CTkFrame(self._protocol_frame, height=30)
-        item.pack(fill="x", padx=10, pady=3)
+        item = ctk.CTkFrame(self._protocol_frame, height=30, fg_color="transparent")
+        item.pack(fill="x", padx=10, pady=2)
         item.pack_propagate(False)
 
         ctk.CTkLabel(
@@ -560,8 +568,8 @@ class DashboardPanel:
             return
 
         # CustomTkinter connection item
-        item = ctk.CTkFrame(self._connections_frame, height=35)
-        item.pack(fill="x", padx=10, pady=3)
+        item = ctk.CTkFrame(self._connections_frame, height=35, fg_color="transparent")
+        item.pack(fill="x", padx=10, pady=2)
         item.pack_propagate(False)
 
         src = f"{conn.get('src_ip', '')}:{conn.get('src_port', '')}"
@@ -587,7 +595,7 @@ class DashboardPanel:
             return
 
         try:
-            # Clear existing content
+            # Clear existing content (except title)
             for widget in self._alerts_frame.winfo_children():
                 if widget.winfo_class() not in ["CTkLabel", "Label"]:
                     widget.destroy()
@@ -604,6 +612,133 @@ class DashboardPanel:
 
         except Exception as e:
             self._logger.error(f"Error updating alerts panel: {e}")
+
+    def _update_websites_panel(self) -> None:
+        """Update top visited websites panel."""
+        if not hasattr(self, '_websites_frame') or not self._websites_frame:
+            return
+
+        try:
+            # Clear existing content (except title)
+            for widget in self._websites_frame.winfo_children():
+                if widget.winfo_class() not in ["CTkLabel", "Label"]:
+                    widget.destroy()
+
+            if self._analysis:
+                # Get top websites
+                top_websites = self._analysis.get_top_websites(limit=10)
+
+                if not top_websites:
+                    self._add_no_data_message(self._websites_frame)
+                else:
+                    # Create a scrollable frame if there are many items
+                    if CUSTOMTKINTER_AVAILABLE:
+                        scroll_frame = ctk.CTkScrollableFrame(self._websites_frame, fg_color="transparent")
+                        scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
+                        parent = scroll_frame
+                    else:
+                        parent = self._websites_frame
+
+                    for site_data in top_websites:
+                        self._add_website_item(parent, site_data)
+
+        except Exception as e:
+            self._logger.error(f"Error updating websites panel: {e}")
+
+    def _add_no_data_message(self, parent) -> None:
+        """Add no data message."""
+        if not CUSTOMTKINTER_AVAILABLE:
+            ttk.Label(
+                parent,
+                text="No data available",
+                font=("Arial", 10, "italic"),
+            ).pack(padx=10, pady=10)
+            return
+
+        ctk.CTkLabel(
+            parent,
+            text="No data available",
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+        ).pack(pady=20)
+
+    def _add_talker_item(self, parent, ip: str, bytes_count: int) -> None:
+        """Add top talker item to display.
+
+        Args:
+            parent: Parent widget
+            ip: IP address
+            bytes_count: Total bytes
+        """
+        formatted_bytes = self._format_bytes(bytes_count)
+        
+        if not CUSTOMTKINTER_AVAILABLE:
+            frame = ttk.Frame(parent)
+            frame.pack(fill="x", padx=5, pady=2)
+            ttk.Label(frame, text=ip, font=("Arial", 9)).pack(side="left")
+            ttk.Label(frame, text=formatted_bytes, font=("Arial", 9)).pack(side="right")
+            return
+
+        # CustomTkinter item
+        item = ctk.CTkFrame(parent, height=30, fg_color="transparent")
+        item.pack(fill="x", padx=5, pady=2)
+        item.pack_propagate(False)
+
+        ctk.CTkLabel(
+            item,
+            text=ip,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left", padx=10)
+
+        ctk.CTkLabel(
+            item,
+            text=formatted_bytes,
+            font=ctk.CTkFont(size=11, weight="bold"),
+        ).pack(side="right", padx=10)
+
+    def _add_website_item(self, parent, site_data: Dict[str, any]) -> None:
+        """Add website item to display.
+
+        Args:
+            parent: Parent widget
+            site_data: Dictionary with website statistics
+        """
+        host = site_data.get('host', 'Unknown')
+        request_count = site_data.get('request_count', 0)
+        total_bytes = site_data.get('total_bytes', 0)
+        unique_paths = site_data.get('unique_paths', 0)
+
+        if not CUSTOMTKINTER_AVAILABLE:
+            frame = ttk.Frame(parent)
+            frame.pack(fill="x", padx=5, pady=3)
+            ttk.Label(frame, text=host, font=("Arial", 9, "bold")).pack(side="left")
+            ttk.Label(frame, text=f"{request_count} reqs", font=("Arial", 9)).pack(side="right")
+            return
+
+        # CustomTkinter item
+        item = ctk.CTkFrame(parent, height=45, fg_color="transparent")
+        item.pack(fill="x", padx=5, pady=2)
+        item.pack_propagate(False)
+
+        # Left side - hostname
+        ctk.CTkLabel(
+            item,
+            text=host,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            anchor="w",
+        ).pack(side="left", padx=10, fill="x", expand=True)
+
+        # Right side - stats
+        stats_text = f"{request_count} reqs"
+        if unique_paths > 1:
+            stats_text += f" | {unique_paths} pages"
+
+        ctk.CTkLabel(
+            item,
+            text=stats_text,
+            font=ctk.CTkFont(size=10),
+            text_color="gray",
+        ).pack(side="right", padx=10)
 
     def _add_no_alerts_message(self) -> None:
         """Add no alerts message."""
@@ -646,8 +781,8 @@ class DashboardPanel:
             return
 
         # CustomTkinter alert item
-        item = ctk.CTkFrame(self._alerts_frame, height=40)
-        item.pack(fill="x", padx=10, pady=3)
+        item = ctk.CTkFrame(self._alerts_frame, height=40, fg_color="transparent")
+        item.pack(fill="x", padx=10, pady=2)
         item.pack_propagate(False)
 
         title = alert.get('title', 'Unknown Alert')

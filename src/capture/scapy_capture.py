@@ -8,9 +8,11 @@ Provides a production-ready implementation of PacketCapture.
 import queue
 import threading
 import time
+import os
+import ctypes
 from collections import deque
 from datetime import datetime
-from typing import Optional, Iterator, Callable
+from typing import Optional, Iterator, Callable, Dict, Any
 
 from scapy.all import (
     sniff,
@@ -18,6 +20,7 @@ from scapy.all import (
     get_if_addr,
     Packet as ScapyPacket,
 )
+from scapy.config import conf
 from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.inet6 import IPv6
 from scapy.layers.l2 import Ether, ARP
@@ -28,6 +31,7 @@ from src.core.exceptions import (
     PermissionDeniedError,
 )
 from src.core.logger import get_logger
+from src.utils.network import get_active_wifi_interface
 from .base import (
     PacketCapture,
     PacketInfo,
@@ -51,6 +55,85 @@ class ScapyCapture(PacketCapture):
         >>> for packet in capture.get_packets():
         ...     print(f"{packet.src_ip} -> {packet.dst_ip}")
     """
+
+    @staticmethod
+    def check_capture_environment() -> Dict[str, Any]:
+        """Check if the capture environment is properly configured.
+
+        Performs the following checks:
+        1. Administrator/root privileges
+        2. Npcap/WinPcap installation (Windows)
+        3. Npcap service status (Windows)
+
+        Returns:
+            Dictionary with check results:
+            {
+                'is_admin': bool,
+                'npcap_installed': bool,
+                'npcap_service_running': bool,
+                'issues': list of str,
+                'suggestions': list of str
+            }
+        """
+        result = {
+            'is_admin': False,
+            'npcap_installed': True,  # Assume true on non-Windows
+            'npcap_service_running': True,
+            'issues': [],
+            'suggestions': []
+        }
+
+        # Check for administrator privileges
+        try:
+            if os.name == 'nt':  # Windows
+                # Check if running as administrator
+                is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+                result['is_admin'] = bool(is_admin)
+            else:
+                # On Unix-like systems, check if we are root
+                result['is_admin'] = (os.geteuid() == 0)
+        except Exception:
+            result['is_admin'] = False
+
+        if not result['is_admin']:
+            result['issues'].append("Not running with administrator privileges")
+            if os.name == 'nt':
+                result['suggestions'].append("Right-click the program and select 'Run as administrator'")
+            else:
+                result['suggestions'].append("Run the program with sudo: sudo python src/main.py")
+
+        # Check for Npcap/WinPcap on Windows
+        if os.name == 'nt':
+            # Check if Npcap is available via Scapy
+            try:
+                result['npcap_installed'] = conf.use_pcap
+
+                if not conf.use_pcap:
+                    result['issues'].append("Npcap/WinPcap not detected")
+                    result['suggestions'].append("Download and install Npcap from https://npcap.com/")
+                    result['suggestions'].append("During installation, check 'Install Npcap in WinPcap API-compatible Mode'")
+            except Exception:
+                result['npcap_installed'] = False
+
+            # Check Npcap service status
+            try:
+                import subprocess
+                output = subprocess.check_output(
+                    'sc query npcap',
+                    shell=True,
+                    stderr=subprocess.DEVNULL
+                ).decode('gbk', errors='ignore')
+                result['npcap_service_running'] = 'RUNNING' in output
+            except Exception:
+                # If service check fails, assume Npcap is not properly installed
+                if not result['npcap_installed']:
+                    result['npcap_service_running'] = False
+
+            if not result['npcap_service_running'] and result['npcap_installed']:
+                result['issues'].append("Npcap service is not running")
+                result['suggestions'].append("Start the Npcap service: net start npcap")
+
+        return result
 
     def __init__(
         self,
@@ -86,6 +169,9 @@ class ScapyCapture(PacketCapture):
 
         # Statistics
         self._last_packet_time: Optional[datetime] = None
+        
+        # Error tracking
+        self._error: Optional[Exception] = None
 
     def start_capture(self) -> None:
         """Start packet capture.
@@ -98,6 +184,11 @@ class ScapyCapture(PacketCapture):
         if self.is_running:
             logger.warning("Capture already running")
             return
+
+        # Check environment before starting
+        env_check = self.check_capture_environment()
+        if env_check['issues']:
+            logger.warning(f"Environment issues detected: {env_check['issues']}")
 
         self._set_state(CaptureState.STARTING)
 
@@ -115,6 +206,7 @@ class ScapyCapture(PacketCapture):
 
             # Reset stop event
             self._stop_event.clear()
+            self._error = None
 
             # Start capture thread
             self._capture_thread = threading.Thread(
@@ -126,23 +218,55 @@ class ScapyCapture(PacketCapture):
 
             # Wait for capture to actually start
             if not self.wait_for_state(CaptureState.RUNNING, timeout=5):
+                if self.state == CaptureState.ERROR and self._error:
+                    raise self._error
                 raise CaptureError("Capture failed to start within timeout")
 
             logger.info(f"Capture started on interface {interface}")
 
         except PermissionError as e:
             self._set_state(CaptureState.ERROR)
-            raise PermissionDeniedError(
-                "Administrator privileges required for packet capture",
-                {"suggestion": "Run with administrator/root privileges"},
-            )
+            env_check = self.check_capture_environment()
+            suggestions = env_check.get('suggestions', [])
+
+            error_msg = "Administrator privileges required for packet capture"
+            details = {"error": str(e)}
+
+            if suggestions:
+                details["suggestion"] = suggestions[0]
+                if len(suggestions) > 1:
+                    details["additional_suggestions"] = suggestions[1:]
+
+            raise PermissionDeniedError(error_msg, details)
         except OSError as e:
             self._set_state(CaptureState.ERROR)
-            if "Permission denied" in str(e) or "Operation not permitted" in str(e):
+            error_msg = str(e).lower()
+
+            if "permission denied" in error_msg or "operation not permitted" in error_msg:
+                env_check = self.check_capture_environment()
+                suggestions = env_check.get('suggestions', [])
+
+                details = {"error": str(e)}
+                if suggestions:
+                    details["suggestion"] = suggestions[0]
+
                 raise PermissionDeniedError(
                     "Permission denied for packet capture",
-                    {"error": str(e)},
+                    details,
                 )
+
+            # Check for Npcap-related errors on Windows
+            if os.name == 'nt':
+                if "socket" in error_msg or "no such device" in error_msg:
+                    raise CaptureError(
+                        "Npcap driver not available or not properly installed",
+                        {
+                            "error": str(e),
+                            "suggestion": "Install Npcap from https://npcap.com/ and select 'Install Npcap in WinPcap API-compatible Mode'",
+                            "troubleshooting": "Ensure Npcap service is running: sc query npcap",
+                        }
+                    )
+
             raise CaptureError(f"Failed to start capture: {e}")
 
     def stop_capture(self) -> None:
@@ -199,26 +323,64 @@ class ScapyCapture(PacketCapture):
             return self._interface
 
         # Try to find a suitable default interface
-        interfaces = get_if_list()
+        interfaces = self.get_interfaces()
+        
+        # Try to identify the active Wi-Fi interface using system routing
+        active_wifi = get_active_wifi_interface()
+        active_wifi_ip = active_wifi[1] if active_wifi else None
+        
+        if active_wifi:
+            logger.info(f"Detected active Wi-Fi interface: {active_wifi[0]} ({active_wifi[1]})")
 
-        # Filter out loopback
+        candidates = []
+        
         for iface in interfaces:
-            if iface.lower() not in ("lo", "loopback"):
-                try:
-                    # Check if interface has an IP address
-                    addr = get_if_addr(iface)
-                    if addr and addr != "0.0.0.0":
-                        return iface
-                except Exception:
-                    continue
+            ip = iface.get("address", "")
+            name = iface.get("name", "").lower()
+            desc = iface.get("description", "").lower()
+            
+            # Skip loopback and empty IPs
+            if not ip or ip == "0.0.0.0" or ip == "127.0.0.1":
+                continue
+                
+            # Skip link-local addresses (169.254.x.x) usually indicating no connectivity
+            if ip.startswith("169.254."):
+                continue
+                
+            # Score the interface
+            score = 0
+            
+            # CRITICAL: Match against the detected active Wi-Fi IP
+            # This ensures we pick the specific Scapy interface that corresponds 
+            # to the system's active Wi-Fi adapter
+            if active_wifi_ip and ip == active_wifi_ip:
+                score += 100
+                logger.info(f"Interface {iface['name']} matches active Wi-Fi IP {ip}, boosting score.")
+            
+            # Prioritize WiFi/Wireless interfaces as requested by user context
+            if "wi-fi" in desc or "wireless" in desc or "802.11" in desc or "wlan" in desc:
+                score += 20  # Boost WiFi score significantly
+            elif "ethernet" in desc:
+                score += 5
+            elif "adapter" in desc:
+                score += 2
+                
+            candidates.append((score, iface["name"]))
+            
+        # Sort by score descending
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        
+        if candidates:
+            logger.info(f"Auto-selected interface: {candidates[0][1]}")
+            return candidates[0][1]
 
-        # Fallback to first interface
-        if interfaces:
-            return interfaces[0]
+        # Fallback to Scapy's default logic
+        if conf.iface:
+             return conf.iface.name
 
         raise InterfaceNotFoundError(
             "No suitable network interface found",
-            {"available_interfaces": get_if_list()},
+            {"available_interfaces": [i["name"] for i in interfaces]},
         )
 
     def _interface_exists(self, interface: str) -> bool:
@@ -247,6 +409,12 @@ class ScapyCapture(PacketCapture):
                 "stop_filter": lambda p: self._stop_event.is_set(),
             }
 
+            # Check for Npcap/WinPcap on Windows
+            if not conf.use_pcap:
+                logger.warning("Npcap/WinPcap not found. Attempting fallback to L3 capture (requires Admin).")
+                # Fallback to Layer 3 capture
+                sniff_args["L2socket"] = conf.L3socket
+
             # Add filter if specified
             if self._filter:
                 sniff_args["filter"] = self._filter
@@ -261,15 +429,36 @@ class ScapyCapture(PacketCapture):
 
         except PermissionError as e:
             logger.error(f"Permission denied: {e}")
+            self._error = e
             self._set_state(CaptureState.ERROR)
+            # The thread will exit, and start_capture will pick up the error
         except OSError as e:
             logger.error(f"OS error during capture: {e}")
+            if "install Npcap" in str(e) or "administrator" in str(e).lower():
+                 self._error = CaptureError(
+                    "Capture failed: Npcap not installed or Admin rights missing.",
+                    {"error": str(e), "suggestion": "Install Npcap (https://npcap.com/) and run as Administrator."}
+                )
+            else:
+                self._error = CaptureError(f"OS Error: {e}")
+            self._set_state(CaptureState.ERROR)
+        except RuntimeError as e:
+            logger.error(f"Runtime error during capture: {e}")
+            if "winpcap is not installed" in str(e):
+                 self._error = CaptureError(
+                    "Npcap is not installed.",
+                    {"error": str(e), "suggestion": "Please install Npcap (select 'Install Npcap in WinPcap API-compatible Mode')."}
+                )
+            else:
+                self._error = CaptureError(f"Runtime Error: {e}")
             self._set_state(CaptureState.ERROR)
         except Exception as e:
             logger.error(f"Unexpected error in capture loop: {e}")
+            self._error = CaptureError(f"Unexpected error: {e}")
             self._set_state(CaptureState.ERROR)
         finally:
-            self._set_state(CaptureState.STOPPED)
+            if self.state != CaptureState.ERROR:
+                self._set_state(CaptureState.STOPPED)
 
     def _packet_callback(self, packet: ScapyPacket) -> None:
         """Callback for each captured packet.
@@ -362,6 +551,57 @@ class ScapyCapture(PacketCapture):
         elif packet.haslayer(ICMP):
             protocol = "ICMP"
 
+        # Extract HTTP/HTTPS information
+        url = None
+        host = None
+
+        # Check for HTTP traffic (port 80)
+        if dst_port == 80 or src_port == 80:
+            try:
+                # Try to extract HTTP request from raw payload
+                raw_data = bytes(packet)
+
+                # Look for HTTP request line
+                if b"GET " in raw_data or b"POST " in raw_data or b"HEAD " in raw_data:
+                    # Try to decode as text
+                    try:
+                        payload_str = raw_data.decode('utf-8', errors='ignore')
+
+                        # Find the HTTP request line
+                        lines = payload_str.split('\r\n')
+                        if lines:
+                            request_line = lines[0]
+                            parts = request_line.split(' ')
+                            if len(parts) >= 2 and parts[0] in ('GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'):
+                                path = parts[1]
+                                # Extract Host header
+                                for line in lines[1:]:
+                                    if line.lower().startswith('host:'):
+                                        host = line.split(':', 1)[1].strip()
+                                        # Construct full URL
+                                        url = f"http://{host}{path}"
+                                        break
+                    except Exception:
+                        pass
+
+            except Exception:
+                pass
+
+        # For HTTPS (port 443), we can only extract SNI from TLS ClientHello
+        # This is more complex and may require additional libraries
+        # For now, we'll mark HTTPS traffic but won't extract the URL
+        elif dst_port == 443 or src_port == 443:
+            try:
+                raw_data = bytes(packet)
+                # TLS ClientHello starts with \x16\x03
+                if raw_data[:2] == b'\x16\x03':
+                    # This is likely a TLS packet
+                    # For HTTPS traffic without SNI parsing, we just mark it
+                    # A full TLS parser would be needed to extract SNI
+                    pass
+            except Exception:
+                pass
+
         # Get raw bytes
         raw_data = bytes(packet)
 
@@ -377,6 +617,8 @@ class ScapyCapture(PacketCapture):
             interface=self._interface,
             mac_src=mac_src,
             mac_dst=mac_dst,
+            url=url,
+            host=host,
         )
 
     def get_buffer(self) -> list[PacketInfo]:
@@ -410,24 +652,75 @@ class ScapyCapture(PacketCapture):
         """Get list of available network interfaces.
 
         Returns:
-            List of interface information dictionaries
+            List of interface information dictionaries with correct device names
         """
         interfaces = []
 
-        for iface_name in get_if_list():
+        # First, get the list of interface names that Scapy can actually use
+        # These are the long format names like \Device\NPF_{...}
+        valid_iface_names = get_if_list()
+
+        # Build a map of IP address to device name (for matching with conf.ifaces)
+        ip_to_device = {}
+        for device_name in valid_iface_names:
             try:
-                addr = get_if_addr(iface_name)
-                interfaces.append({
-                    "name": iface_name,
-                    "address": addr,
-                    "description": iface_name,
-                })
+                ip = get_if_addr(device_name)
+                # Skip interfaces with no IP or 0.0.0.0
+                if ip and ip != "0.0.0.0":
+                    ip_to_device[ip] = device_name
             except Exception:
-                interfaces.append({
-                    "name": iface_name,
-                    "address": "",
-                    "description": iface_name,
-                })
+                pass
+
+        # Try to get friendly names from conf.ifaces
+        try:
+            for iface in conf.ifaces.values():
+                try:
+                    ip = iface.ip
+                    # Skip if no IP or not in our valid interface list
+                    if not ip or ip == "0.0.0.0":
+                        continue
+
+                    # Get the actual device name
+                    device_name = ip_to_device.get(ip)
+
+                    if not device_name:
+                        continue
+
+                    description = iface.description
+                    mac = iface.mac
+
+                    # Use description as friendly name
+                    friendly_name = description if description else device_name
+
+                    interfaces.append({
+                        "name": device_name,  # Use actual device name that Scapy needs
+                        "address": ip,
+                        "description": friendly_name,
+                        "mac": mac
+                    })
+                except Exception as e:
+                    logger.warning(f"Error processing interface {iface}: {e}")
+                    continue
+        except Exception as e:
+            logger.debug(f"Error getting interfaces from Scapy conf: {e}")
+
+        # If we didn't get any interfaces from conf.ifaces, use get_if_list directly
+        if not interfaces:
+            for device_name in valid_iface_names:
+                try:
+                    ip = get_if_addr(device_name)
+                    # Skip empty IPs
+                    if not ip or ip == "0.0.0.0":
+                        continue
+
+                    interfaces.append({
+                        "name": device_name,
+                        "address": ip,
+                        "description": device_name,  # No friendly name available
+                        "mac": None
+                    })
+                except Exception:
+                    continue
 
         return interfaces
 

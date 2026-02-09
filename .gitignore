@@ -150,6 +150,11 @@ data/database/*.db-wal
 !data/database/.gitkeep
 logs/*
 !logs/.gitkeep
+*.exe
+.trae/
+data/*.db
+data/*.db-shm
+data/*.db-wal
 
 # Configuration files with sensitive data
 config/

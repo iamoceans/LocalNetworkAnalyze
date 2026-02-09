@@ -101,8 +101,8 @@ class GuiConfig:
         window_width: Default window width
         window_height: Default window height
     """
-    theme: str = "dark"
-    color_theme: str = "clam"
+    theme: str = "light"
+    color_theme: str = "lavender_glass"
     language: str = "en"
     update_interval: int = 1000  # 1 second
     max_display_packets: int = 1000
@@ -272,7 +272,7 @@ class AppConfig:
         )
 
         gui_config = GuiConfig(
-            theme=os.getenv("LNA_THEME", "dark"),
+            theme=os.getenv("LNA_THEME", "light"),
         )
 
         db_config = DatabaseConfig(

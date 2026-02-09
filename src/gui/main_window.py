@@ -6,6 +6,7 @@ Provides the primary GUI framework for the network analyzer.
 
 import tkinter as tk
 from tkinter import ttk
+import os
 from typing import Optional, Callable, Dict, Any
 from datetime import datetime
 import threading
@@ -94,7 +95,18 @@ class MainWindow:
 
             # Set appearance mode and theme
             ctk.set_appearance_mode(self._config.theme)
-            ctk.set_default_color_theme(self._config.color_theme)
+            
+            theme = self._config.color_theme
+            if theme == "lavender_glass":
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                theme_path = os.path.join(base_dir, "themes", "lavender_glass.json")
+                if os.path.exists(theme_path):
+                    ctk.set_default_color_theme(theme_path)
+                else:
+                    self._logger.warning(f"Theme file not found: {theme_path}, falling back to blue")
+                    ctk.set_default_color_theme("blue")
+            else:
+                ctk.set_default_color_theme(self._config.color_theme)
 
             return root
         else:
@@ -105,7 +117,14 @@ class MainWindow:
 
             # Configure basic styling
             style = ttk.Style()
-            style.theme_use(self._config.color_theme)
+            
+            # Check if theme is valid for ttk
+            theme = self._config.color_theme
+            if theme == "lavender_glass" or theme not in style.theme_names():
+                self._logger.warning(f"Theme '{theme}' not found in standard tkinter, falling back to 'clam'")
+                theme = "clam"
+                
+            style.theme_use(theme)
 
             return root
 
@@ -139,18 +158,19 @@ class MainWindow:
             # Navigation frame (sidebar)
             self._navigation_frame = ctk.CTkFrame(
                 self._root,
-                width=200,
-                corner_radius=0
+                width=240,
+                corner_radius=15
             )
-            self._navigation_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+            self._navigation_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
             self._navigation_frame.grid_rowconfigure(5, weight=1)
 
             # Content frame (main area)
             self._content_frame = ctk.CTkFrame(
                 self._root,
-                corner_radius=0
+                corner_radius=15,
+                fg_color="transparent"
             )
-            self._content_frame.grid(row=0, column=1, sticky="nsew", padx=0, pady=0)
+            self._content_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 20), pady=20)
             self._content_frame.grid_rowconfigure(0, weight=1)
             self._content_frame.grid_columnconfigure(0, weight=1)
 
@@ -251,8 +271,8 @@ class MainWindow:
                 font=ctk.CTkFont(size=14),
                 height=40,
                 fg_color="transparent",
-                text_color=("gray10", "gray90"),
-                hover_color=("gray70", "gray30"),
+                text_color=["#334155", "#c0caf5"],
+                hover_color=["#E0E7FF", "#2a2d3e"],
                 anchor="w",
                 command=btn_config["command"],
             )
@@ -271,8 +291,9 @@ class MainWindow:
             text=f"{exit_label}  🚪",
             font=ctk.CTkFont(size=14),
             height=40,
-            fg_color=("gray90", "gray30"),
-            hover_color=("gray70", "gray20"),
+            fg_color=["#E2E8F0", "#2a2d3e"],
+            text_color=["#334155", "#c0caf5"],
+            hover_color=["#CBD5E1", "#414868"],
             anchor="w",
             command=self.quit,
         )
@@ -541,14 +562,24 @@ class MainWindow:
 
         try:
             # Create capture panel
-            self._current_panel = create_capture_panel(
+            panel = create_capture_panel(
                 parent=self._content_frame,
                 capture=self._capture,
+                analysis=self._analysis,
+                detection=self._detection,
                 database=self._database,
             )
 
+            # Restore capture state if one is running
+            # Check if there's an active capture from a previous panel instance
+            if hasattr(self, '_active_capture_state') and self._active_capture_state:
+                panel.restore_capture_state(self._active_capture_state)
+
             # Build panel UI
-            self._current_panel.build()
+            panel.build()
+
+            # Save reference to current panel for state restoration
+            self._current_panel = panel
 
             self._update_status("Capture panel loaded")
 
@@ -564,7 +595,9 @@ class MainWindow:
             # Create scan panel
             from src.scan import create_network_scanner
 
-            scanner = create_network_scanner() if not self._capture else None
+            # Always create a new scanner instance if not provided
+            # We don't need to check for capture engine, as scanner is independent
+            scanner = create_network_scanner()
 
             self._current_panel = create_scan_panel(
                 parent=self._content_frame,

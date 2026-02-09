@@ -245,8 +245,8 @@ class NetworkScannerWrapper:
                 "alive": result.is_alive,
                 "mac": result.mac,
                 "hostname": result.hostname,
-                "latency": result.latency,
-                "ports": result.open_ports if result.open_ports else [],
+                "latency": result.response_time,
+                "ports": list(result.open_ports) if result.open_ports else [],
             }
             results.append(result_dict)
         return results

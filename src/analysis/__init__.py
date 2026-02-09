@@ -31,6 +31,11 @@ from .connection_tracker import (
     ConnectionState,
     create_connection_tracker,
 )
+from .website_tracker import (
+    WebsiteTracker,
+    WebsiteStats,
+    create_website_tracker,
+)
 
 
 class AnalysisEngine:
@@ -45,6 +50,7 @@ class AnalysisEngine:
         traffic_stats: Optional[TrafficStatistics] = None,
         bandwidth_monitor: Optional[BandwidthMonitor] = None,
         connection_tracker: Optional[ConnectionTracker] = None,
+        website_tracker: Optional[WebsiteTracker] = None,
     ) -> None:
         """Initialize analysis engine.
 
@@ -52,10 +58,12 @@ class AnalysisEngine:
             traffic_stats: Traffic statistics module
             bandwidth_monitor: Bandwidth monitoring module
             connection_tracker: Connection tracking module
+            website_tracker: Website tracking module
         """
         self._traffic_stats = traffic_stats or create_traffic_statistics()
         self._bandwidth_monitor = bandwidth_monitor or create_bandwidth_monitor()
         self._connection_tracker = connection_tracker or create_connection_tracker()
+        self._website_tracker = website_tracker or create_website_tracker()
 
         logger = get_logger(__name__)
         self._logger = logger
@@ -69,6 +77,7 @@ class AnalysisEngine:
         self._traffic_stats.update(packet)
         self._bandwidth_monitor.update(packet)
         self._connection_tracker.update(packet)
+        self._website_tracker.update(packet)
 
     def get_traffic_snapshot(self) -> TrafficSnapshot:
         """Get current traffic statistics snapshot.
@@ -158,17 +167,17 @@ class AnalysisEngine:
         snapshot = self._traffic_stats.get_snapshot()
         return snapshot.top_connections[:limit]
 
-    def get_top_talkers(self, limit: int = 10) -> List[tuple]:
+    def get_top_talkers(self, limit: int = 10, window_seconds: Optional[float] = None) -> List[tuple]:
         """Get top talkers by bytes transferred.
 
         Args:
             limit: Maximum number of talkers to return
+            window_seconds: Time window in seconds (e.g. 3600 for last hour)
 
         Returns:
             List of (ip, bytes) tuples
         """
-        snapshot = self._traffic_stats.get_snapshot()
-        return snapshot.top_talkers[:limit]
+        return self._traffic_stats.get_top_talkers(limit, window_seconds)
 
     def get_connection_count(self) -> int:
         """Get total number of tracked connections.
@@ -264,9 +273,11 @@ class AnalysisEngine:
             - active_connections: Active connection count
             - protocol_stats: Protocol distribution dict
             - top_connections: Top connections list
+            - top_websites: Top visited websites list
         """
         snapshot = self._traffic_stats.get_snapshot()
         active_conns = self._connection_tracker.get_active_connections()
+        top_websites = self._website_tracker.get_top_websites(limit=10)
 
         return {
             "total_packets": snapshot.total_packets,
@@ -276,7 +287,19 @@ class AnalysisEngine:
             "active_connections": len(active_conns),
             "protocol_stats": snapshot.protocol_stats,
             "top_connections": snapshot.top_connections,
+            "top_websites": top_websites,
         }
+
+    def get_top_websites(self, limit: int = 10) -> list[Dict[str, any]]:
+        """Get most visited websites.
+
+        Args:
+            limit: Maximum number of websites to return
+
+        Returns:
+            List of website statistics dictionaries
+        """
+        return self._website_tracker.get_top_websites(limit=limit)
 
     def reset(self) -> None:
         """Reset all analysis modules."""

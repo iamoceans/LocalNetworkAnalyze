@@ -206,10 +206,11 @@ class ScanPanel:
         self._scan_type_var = ctk.StringVar(value="arp")
         self._scan_type_combo = ctk.CTkComboBox(
             type_frame,
-            variable=self._scan_type_var,
             values=["arp", "icmp", "port"],
             width=150,
+            command=self._on_scan_type_changed,
         )
+        self._scan_type_combo.set("arp")
         self._scan_type_combo.pack(side="left", padx=5)
 
         # Type descriptions
@@ -264,7 +265,7 @@ class ScanPanel:
         self._ports_frame.pack_forget()
 
         # Bind scan type change
-        self._scan_type_combo.configure(command=self._on_scan_type_changed)
+        # self._scan_type_combo.configure(command=self._on_scan_type_changed)
 
         # Control buttons
         btn_frame = ctk.CTkFrame(self._control_frame, fg_color="transparent")
@@ -395,6 +396,9 @@ class ScanPanel:
         Args:
             value: New scan type value
         """
+        # Update the variable to keep it in sync
+        self._scan_type_var.set(value)
+        
         descriptions = {
             "arp": "ARP Scan - Discover hosts on local network",
             "icmp": "ICMP Scan - Ping sweep to find alive hosts",
@@ -495,6 +499,36 @@ class ScanPanel:
             for item in self._results_tree.get_children():
                 self._results_tree.delete(item)
 
+    def _save_scan_results(self, results: List[Any]) -> None:
+        """Save scan results to database (internal helper)."""
+        try:
+            from src.storage import ScanResultOrm
+            import uuid
+
+            with self._database.get_session() as session:
+                for result in results:
+                    # Handle both dict and object
+                    if hasattr(result, 'to_dict'):
+                        r_dict = result.to_dict()
+                    else:
+                        r_dict = result
+                        
+                    scan_result = ScanResultOrm(
+                        scan_id=str(uuid.uuid4()),
+                        scan_type=self._scan_type_var.get(),
+                        target_ip=r_dict.get("ip", ""),
+                        target_hostname=r_dict.get("hostname"),
+                        mac_address=r_dict.get("mac"),
+                        is_alive=r_dict.get("is_alive") or r_dict.get("alive", False),
+                        response_time=r_dict.get("response_time") or r_dict.get("latency"),
+                        open_ports=str(r_dict.get("ports", [])),
+                        start_time=datetime.now(),
+                        end_time=datetime.now(),
+                    )
+                    session.add(scan_result)
+        except Exception as e:
+            self._logger.error(f"Error auto-saving scan results: {e}")
+
     def save_results(self) -> None:
         """Save scan results to database."""
         if not self._database:
@@ -516,8 +550,8 @@ class ScanPanel:
                         target_ip=result.get("ip", ""),
                         target_hostname=result.get("hostname"),
                         mac_address=result.get("mac"),
-                        is_alive=result.get("alive", False),
-                        response_time=result.get("latency"),
+                        is_alive=result.get("alive") or result.get("is_alive", False),
+                        response_time=result.get("response_time") or result.get("latency"),
                         open_ports=str(result.get("ports", [])),
                         start_time=datetime.now(),
                         end_time=datetime.now(),
@@ -580,8 +614,26 @@ class ScanPanel:
                 results = self._scanner.port_scan(target, ports)
 
             # Process results
+            # The previous approach of modifying the list in place was problematic
+            # Create a fresh list of dicts for processing
+            processed_results = []
+            
             for result in results:
-                self._add_result(result)
+                # Convert ScanResult object to dictionary
+                if hasattr(result, 'to_dict'):
+                    r_dict = result.to_dict()
+                else:
+                    r_dict = result
+                
+                # Add to UI - SCHEDULE ON MAIN THREAD
+                if hasattr(self._frame, 'after'):
+                    self._frame.after(0, lambda r=r_dict: self._add_result(r))
+                    
+                processed_results.append(r_dict)
+            
+            # Save results to database automatically
+            if self._database and processed_results:
+                self._save_scan_results(processed_results)
 
             # Update UI from main thread
             if hasattr(self._frame, 'after'):
@@ -589,8 +641,9 @@ class ScanPanel:
 
         except Exception as e:
             self._logger.error(f"Error running scan: {e}")
+            err_msg = str(e)
             if hasattr(self._frame, 'after'):
-                self._frame.after(0, lambda: self._update_status(f"Error: {e}"))
+                self._frame.after(0, lambda: self._update_status(f"Error: {err_msg}"))
 
         finally:
             self._is_scanning = False
@@ -612,9 +665,12 @@ class ScanPanel:
             ip = result.get("ip", "")
             hostname = result.get("hostname", "N/A")
             mac = result.get("mac", "N/A")
-            status = "Alive" if result.get("alive") else "Down"
+            status = "Alive" if result.get("alive") or result.get("is_alive") else "Down"
             ports = ", ".join(map(str, result.get("ports", [])))
-            latency = f"{result.get('latency', 0):.1f}ms" if result.get("latency") else "N/A"
+            
+            # Handle response_time/latency
+            resp_time = result.get("response_time") or result.get("latency")
+            latency = f"{resp_time:.1f}ms" if resp_time is not None else "N/A"
 
             self._results_tree.insert("", 0, values=(ip, hostname, mac, status, ports, latency))
 
@@ -661,6 +717,10 @@ def create_scan_panel(
     Returns:
         ScanPanel instance
     """
+    # Always ensure a scanner is available
+    if scanner is None:
+        scanner = create_network_scanner()
+
     return ScanPanel(
         parent=parent,
         scanner=scanner,

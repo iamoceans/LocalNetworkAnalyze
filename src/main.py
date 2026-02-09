@@ -156,6 +156,41 @@ def setup_application(args: argparse.Namespace) -> None:
     logger.info("Local Network Analyzer starting...")
     logger.debug(f"Arguments: {args}")
 
+    # Check capture environment (for GUI mode)
+    if not args.headless:
+        _check_capture_environment(logger)
+
+
+def _check_capture_environment(logger) -> None:
+    """Check if the capture environment is properly configured.
+
+    Logs warnings if environment issues are detected.
+
+    Args:
+        logger: Logger instance
+    """
+    try:
+        from src.capture.scapy_capture import ScapyCapture
+
+        env_check = ScapyCapture.check_capture_environment()
+
+        if env_check['issues']:
+            logger.warning("=" * 60)
+            logger.warning("Environment issues detected:")
+            for issue in env_check['issues']:
+                logger.warning(f"  - {issue}")
+
+            logger.warning("")
+            logger.warning("Suggested solutions:")
+            for suggestion in env_check['suggestions']:
+                logger.warning(f"  - {suggestion}")
+            logger.warning("")
+            logger.warning("For detailed installation instructions, see INSTALL.md")
+            logger.warning("=" * 60)
+
+    except Exception as e:
+        logger.debug(f"Environment check skipped: {e}")
+
 
 def initialize_components(args: argparse.Namespace):
     """Initialize application components.
@@ -237,7 +272,7 @@ def run_headless_capture(args, capture, analysis, detection, database):
         packet_repo.save(packet)
 
         # Check for detection alerts
-        detection.process_packet(packet)
+        detection.process(packet)
 
     def alert_callback(alert):
         nonlocal alerts_generated
@@ -252,10 +287,20 @@ def run_headless_capture(args, capture, analysis, detection, database):
     logger.info(f"Starting capture on {args.interface} for {args.duration} seconds...")
 
     try:
-        capture.start_capture(
+        # Create capture with specified interface and filter
+        from src.capture import create_capture as create_packet_capture
+        capture = create_packet_capture(
+            backend="scapy",
             interface=args.interface,
             filter=args.filter or "",
         )
+
+        # Wire up callbacks before starting
+        capture.add_callback(packet_callback)
+        detection.add_callback(alert_callback)
+
+        # Start capture (no arguments, interface and filter are set in __init__)
+        capture.start_capture()
 
         # Wait for duration
         time.sleep(args.duration)
@@ -415,6 +460,35 @@ def run_gui(args, capture, analysis, detection, database):
         lang_manager=lang_manager,
     )
 
+    # Wire up analysis and detection engines to capture
+    if capture:
+        from src.capture.base import PacketInfo
+        from src.storage import create_packet_repository
+        
+        packet_repo = create_packet_repository(database.get_session)
+        
+        def gui_packet_callback(packet: PacketInfo):
+            try:
+                # Update analysis engine
+                if analysis:
+                    analysis.update(packet)
+                
+                # Check for detection alerts
+                if detection:
+                    detection.process(packet)
+                    
+                # Save to database (optional, can be heavy for GUI thread if not async)
+                # For now we skip DB save in GUI mode to keep it responsive, 
+                # or rely on CapturePanel's explicit save. 
+                # Uncomment if auto-save is desired:
+                # packet_repo.save(packet)
+                
+            except Exception as e:
+                logger.error(f"Error in GUI packet callback: {e}")
+
+        capture.add_callback(gui_packet_callback)
+        logger.info("Analysis and detection engines connected to capture")
+
     # Set engines
     main_window.set_engines(
         capture=capture,
@@ -422,6 +496,25 @@ def run_gui(args, capture, analysis, detection, database):
         detection=detection,
         database=database,
     )
+
+    # Auto-start capture if interface provided or default
+    if capture and not args.headless:
+        # Run in a separate thread to not block GUI startup
+        import threading
+        def start_background_capture():
+            try:
+                # Wire up callbacks before starting
+                capture.add_callback(gui_packet_callback)
+
+                # Start capture (no arguments needed)
+                # The capture object was created earlier with default interface
+                capture.start_capture()
+            except Exception as e:
+                logger.error(f"Failed to auto-start capture: {e}")
+
+        # Start capture thread
+        threading.Thread(target=start_background_capture, daemon=True).start()
+        logger.info("Auto-starting background capture...")
 
     logger.info("Starting GUI application...")
 
