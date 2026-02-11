@@ -25,6 +25,10 @@ from src.scan import (
     create_arp_scanner,
     create_icmp_scanner,
     create_port_scanner,
+    quick_scan,
+    scan_hosts,
+    NetworkScannerWrapper,
+    create_network_scanner,
 )
 
 
@@ -452,3 +456,247 @@ class TestFactoryFunctions:
 
         assert isinstance(scanner, PortScanner)
         assert scanner.get_scan_type() == ScanType.TCP_SYN
+
+
+@pytest.mark.unit
+class TestCreateScanner:
+    """Test create_scanner function."""
+
+    @patch('src.scan.create_arp_scanner')
+    def test_create_scanner_arp(self, mock_create_arp):
+        """Test creating ARP scanner."""
+        mock_scanner = MagicMock()
+        mock_create_arp.return_value = mock_scanner
+
+        scanner = create_scanner(ScanType.ARP, ["192.168.1.0/24"])
+
+        mock_create_arp.assert_called_once()
+        assert scanner is not None
+
+    @patch('src.scan.create_icmp_scanner')
+    def test_create_scanner_icmp(self, mock_create_icmp):
+        """Test creating ICMP scanner."""
+        mock_scanner = MagicMock()
+        mock_create_icmp.return_value = mock_scanner
+
+        scanner = create_scanner(ScanType.ICMP, ["192.168.1.1"])
+
+        mock_create_icmp.assert_called_once()
+        assert scanner is not None
+
+    @patch('src.scan.create_port_scanner')
+    def test_create_scanner_tcp_syn(self, mock_create_port):
+        """Test creating TCP SYN scanner."""
+        mock_scanner = MagicMock()
+        mock_create_port.return_value = mock_scanner
+
+        scanner = create_scanner(
+            ScanType.TCP_SYN,
+            ["192.168.1.1"],
+            ports=[80, 443]
+        )
+
+        mock_create_port.assert_called_once()
+        assert scanner is not None
+
+    @patch('src.scan.create_port_scanner')
+    def test_create_scanner_tcp_connect(self, mock_create_port):
+        """Test creating TCP CONNECT scanner."""
+        mock_scanner = MagicMock()
+        mock_create_port.return_value = mock_scanner
+
+        scanner = create_scanner(
+            ScanType.TCP_CONNECT,
+            ["192.168.1.1"],
+            ports=[22, 80]
+        )
+
+        mock_create_port.assert_called_once()
+        assert scanner is not None
+
+    @patch('src.scan.create_port_scanner')
+    def test_create_scanner_udp(self, mock_create_port):
+        """Test creating UDP scanner."""
+        mock_scanner = MagicMock()
+        mock_create_port.return_value = mock_scanner
+
+        scanner = create_scanner(
+            ScanType.UDP,
+            ["192.168.1.1"],
+            ports=[53, 67]
+        )
+
+        mock_create_port.assert_called_once()
+        assert scanner is not None
+
+    def test_create_scanner_invalid_type(self):
+        """Test creating scanner with invalid type."""
+        with pytest.raises(ValueError):
+            create_scanner("invalid_type", ["192.168.1.1"])
+
+
+@pytest.mark.unit
+class TestQuickScan:
+    """Test quick_scan function."""
+
+    @patch('src.scan.create_scanner')
+    @patch('src.scan.get_local_network')
+    def test_quick_scan_auto_network(self, mock_get_network, mock_create_scanner):
+        """Test quick_scan with auto network detection."""
+        mock_get_network.return_value = "192.168.1.0/24"
+        mock_scanner = MagicMock()
+        mock_report = MagicMock()
+        mock_scanner.scan.return_value = mock_report
+        mock_create_scanner.return_value = mock_scanner
+
+        report = quick_scan(network="auto")
+
+        mock_get_network.assert_called_once()
+        mock_scanner.scan.assert_called_once()
+        assert report is not None
+
+    @patch('src.scan.create_scanner')
+    def test_quick_scan_custom_network(self, mock_create_scanner):
+        """Test quick_scan with custom network."""
+        mock_scanner = MagicMock()
+        mock_report = MagicMock()
+        mock_scanner.scan.return_value = mock_report
+        mock_create_scanner.return_value = mock_scanner
+
+        report = quick_scan(network="10.0.0.0/24")
+
+        mock_create_scanner.assert_called_once()
+        assert report is not None
+
+
+@pytest.mark.unit
+class TestScanHosts:
+    """Test scan_hosts function."""
+
+    @patch('src.scan.create_port_scanner')
+    def test_scan_hosts_default_ports(self, mock_create_port):
+        """Test scanning hosts with default ports."""
+        mock_scanner = MagicMock()
+        mock_report = MagicMock()
+        mock_scanner.scan.return_value = mock_report
+        mock_create_port.return_value = mock_scanner
+
+        report = scan_hosts(["192.168.1.1", "192.168.1.2"])
+
+        mock_create_port.assert_called_once()
+        mock_scanner.scan.assert_called_once()
+        assert report is not None
+
+    @patch('src.scan.create_port_scanner')
+    def test_scan_hosts_custom_ports(self, mock_create_port):
+        """Test scanning hosts with custom ports."""
+        mock_scanner = MagicMock()
+        mock_report = MagicMock()
+        mock_scanner.scan.return_value = mock_report
+        mock_create_port.return_value = mock_scanner
+
+        report = scan_hosts(
+            ["192.168.1.1"],
+            ports=[22, 80, 443],
+            timeout=2.0
+        )
+
+        mock_create_port.assert_called_once()
+        assert report is not None
+
+
+@pytest.mark.unit
+class TestNetworkScannerWrapper:
+    """Test NetworkScannerWrapper class."""
+
+    @patch('src.scan.create_arp_scanner')
+    def test_arp_scan(self, mock_create_arp):
+        """Test ARP scan through wrapper."""
+        mock_scanner = MagicMock()
+        mock_report = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ip = "192.168.1.1"
+        mock_result.is_alive = True
+        mock_result.mac = "00:11:22:33:44:55"
+        mock_result.hostname = "test.local"
+        mock_result.response_time = 5.0
+        mock_result.open_ports = {80, 443}
+        mock_report.results = [mock_result]
+        mock_scanner.scan.return_value = mock_report
+        mock_create_arp.return_value = mock_scanner
+
+        wrapper = NetworkScannerWrapper(timeout=1.0, threads=5)
+        results = wrapper.arp_scan("192.168.1.0/24")
+
+        assert len(results) == 1
+        assert results[0]["ip"] == "192.168.1.1"
+        assert results[0]["alive"] is True
+        assert results[0]["mac"] == "00:11:22:33:44:55"
+
+    @patch('src.scan.create_icmp_scanner')
+    def test_icmp_scan(self, mock_create_icmp):
+        """Test ICMP scan through wrapper."""
+        mock_scanner = MagicMock()
+        mock_report = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ip = "192.168.1.1"
+        mock_result.is_alive = True
+        mock_result.mac = None
+        mock_result.hostname = None
+        mock_result.response_time = 10.0
+        mock_result.open_ports = set()
+        mock_report.results = [mock_result]
+        mock_scanner.scan.return_value = mock_report
+        mock_create_icmp.return_value = mock_scanner
+
+        wrapper = NetworkScannerWrapper()
+        results = wrapper.icmp_scan("192.168.1.1")
+
+        assert len(results) == 1
+        assert results[0]["alive"] is True
+
+    @patch('src.scan.create_port_scanner')
+    def test_port_scan(self, mock_create_port):
+        """Test port scan through wrapper."""
+        mock_scanner = MagicMock()
+        mock_report = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ip = "192.168.1.1"
+        mock_result.is_alive = True
+        mock_result.mac = None
+        mock_result.hostname = None
+        mock_result.response_time = None
+        mock_result.open_ports = {22, 80, 443}
+        mock_report.results = [mock_result]
+        mock_scanner.scan.return_value = mock_report
+        mock_create_port.return_value = mock_scanner
+
+        wrapper = NetworkScannerWrapper()
+        results = wrapper.port_scan("192.168.1.1", [22, 80, 443, 8080])
+
+        assert len(results) == 1
+        assert set(results[0]["ports"]) == {22, 80, 443}
+
+    def test_wrapper_initialization(self):
+        """Test wrapper initialization."""
+        wrapper = NetworkScannerWrapper(timeout=2.0, threads=20)
+        assert wrapper._timeout == 2.0
+        assert wrapper._threads == 20
+
+
+@pytest.mark.unit
+class TestCreateNetworkScanner:
+    """Test create_network_scanner function."""
+
+    def test_create_with_defaults(self):
+        """Test creating scanner with default values."""
+        scanner = create_network_scanner()
+        assert isinstance(scanner, NetworkScannerWrapper)
+        assert scanner._timeout == 1.0
+        assert scanner._threads == 10
+
+    def test_create_with_custom_values(self):
+        """Test creating scanner with custom values."""
+        scanner = create_network_scanner(timeout=5.0, threads=50)
+        assert scanner._timeout == 5.0
+        assert scanner._threads == 50

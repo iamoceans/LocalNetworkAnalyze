@@ -1,8 +1,8 @@
 """
-Alert panel for security alerts display.
+Alert panel for security alerts display with neon severity styling.
 
 Provides tools for viewing, filtering, and managing
-security detection alerts.
+security detection alerts with color-coded severity levels.
 """
 
 import tkinter as tk
@@ -20,6 +20,10 @@ except ImportError:
 from src.core.logger import get_logger
 from src.detection import DetectionEngine
 from src.storage import DatabaseManager, AlertFilter, create_alert_repository
+
+# Import theme system
+from src.gui.theme.colors import Colors, StatusColors
+from src.gui.theme.typography import Fonts
 
 
 class AlertPanel:
@@ -70,6 +74,17 @@ class AlertPanel:
 
         self._logger.info("Alert panel initialized")
 
+    def _get_severity_color(self, severity: str) -> str:
+        """Get color for alert severity level.
+
+        Args:
+            severity: Severity level (critical, high, medium, low)
+
+        Returns:
+            Hex color string for the severity
+        """
+        return StatusColors.get_severity_color(severity)
+
     def build(self) -> tk.Frame:
         """Build alert panel UI.
 
@@ -92,25 +107,26 @@ class AlertPanel:
         return self._frame
 
     def _create_header(self) -> None:
-        """Create panel header."""
+        """Create panel header with neon styling."""
         if not CUSTOMTKINTER_AVAILABLE:
             header = ttk.Frame(self._frame)
             header.pack(fill="x", pady=(0, 10))
 
             ttk.Label(
                 header,
-                text="Security Alerts",
-                font=("Arial", 16, "bold"),
+                text="⚠️ Security Alerts",
+                font=("Fira Code", 16, "bold"),
             ).pack(side="left")
             return
 
-        # CustomTkinter header
+        # CustomTkinter header with neon styling
         title = ctk.CTkLabel(
             self._frame,
-            text="Security Alerts",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            text="⚠️ Security Alerts",
+            font=("Fira Code", 20, "bold"),
+            text_color=Colors.NEON.neon_red,
         )
-        title.pack(pady=(0, 10))
+        title.pack(pady=(0, 12))
 
     def _create_filter_panel(self) -> None:
         """Create filter panel."""
@@ -488,7 +504,7 @@ class AlertPanel:
                 try:
                     dt = datetime.fromisoformat(timestamp)
                     time_str = dt.strftime("%H:%M:%S")
-                except:
+                except (ValueError, TypeError):
                     time_str = str(timestamp)[:19]
             else:
                 time_str = ""

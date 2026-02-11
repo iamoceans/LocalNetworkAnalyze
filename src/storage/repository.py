@@ -159,6 +159,18 @@ class PacketRepository(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_top_destinations(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get top destinations by total traffic.
+
+        Args:
+            limit: Maximum number of results
+
+        Returns:
+            List of top destinations with traffic stats
+        """
+        pass
+
 
 class AlertRepository(ABC):
     """Abstract alert repository interface."""
@@ -505,6 +517,48 @@ class SqlPacketRepository(PacketRepository):
         except Exception as e:
             self._logger.error(f"Failed to delete old packets: {e}")
             raise StorageError(f"Failed to delete old packets: {e}") from e
+
+    def get_top_destinations(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get top destinations by total traffic.
+
+        Args:
+            limit: Maximum number of results
+
+        Returns:
+            List of top destinations with traffic stats
+        """
+        try:
+            with self._session_factory() as session:
+                # Query grouped by dst_ip and dst_port
+                # Sum the length, get max timestamp
+                results = session.query(
+                    PacketOrm.dst_ip,
+                    PacketOrm.dst_port,
+                    func.sum(PacketOrm.length).label('total_bytes'),
+                    func.max(PacketOrm.timestamp).label('last_seen'),
+                    func.count(PacketOrm.id).label('packet_count')
+                ).group_by(
+                    PacketOrm.dst_ip,
+                    PacketOrm.dst_port
+                ).order_by(
+                    desc('total_bytes')
+                ).limit(limit).all()
+
+                # Convert to list of dictionaries
+                return [
+                    {
+                        'dst_ip': row.dst_ip,
+                        'dst_port': row.dst_port,
+                        'total_bytes': row.total_bytes or 0,
+                        'last_seen': row.last_seen.isoformat() if row.last_seen else None,
+                        'packet_count': row.packet_count or 0,
+                    }
+                    for row in results
+                ]
+
+        except Exception as e:
+            self._logger.error(f"Failed to get top destinations: {e}")
+            raise StorageError(f"Failed to get top destinations: {e}") from e
 
 
 class SqlAlertRepository(AlertRepository):

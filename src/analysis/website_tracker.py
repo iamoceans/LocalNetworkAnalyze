@@ -5,12 +5,57 @@ Tracks HTTP/HTTPS requests to build statistics
 about most visited websites.
 """
 
+import re
 from typing import Dict, Optional
 from collections import defaultdict
 from datetime import datetime, timedelta
 
 from src.capture.base import PacketInfo
 from src.core.logger import get_logger
+
+
+# Hostname validation pattern (RFC 952 and RFC 1123)
+# Allows: letters, digits, hyphens, dots for subdomains
+# Max 253 characters total, each label max 63 characters
+_HOSTNAME_PATTERN = re.compile(
+    r"^(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)\.)*"
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)\.?$"
+)
+_MAX_HOSTNAME_LENGTH = 253
+
+
+def is_valid_hostname(hostname: str) -> bool:
+    """Validate hostname according to RFC standards.
+
+    Args:
+        hostname: Hostname to validate
+
+    Returns:
+        True if hostname appears valid, False otherwise
+    """
+    if not hostname or not isinstance(hostname, str):
+        return False
+
+    # Length check
+    if len(hostname) > _MAX_HOSTNAME_LENGTH or len(hostname) == 0:
+        return False
+
+    # Basic format check using regex
+    if not _HOSTNAME_PATTERN.match(hostname):
+        return False
+
+    # Additional checks
+    # Must not start or end with hyphen or dot
+    if hostname.startswith('-') or hostname.endswith('-'):
+        return False
+    if hostname.startswith('.') or hostname.endswith('.'):
+        return False
+
+    # No consecutive dots
+    if '..' in hostname:
+        return False
+
+    return True
 
 
 class WebsiteStats:
@@ -56,24 +101,35 @@ class WebsiteStats:
 
 
 class WebsiteTracker:
-    """Tracks website access statistics."""
+    """Tracks website access statistics with rate limiting."""
+
+    # Rate limiting: maximum updates per second per host
+    DEFAULT_MAX_RATE_PER_SECOND = 100
+    RATE_LIMIT_WINDOW_SECONDS = 1.0
 
     def __init__(
         self,
         max_websites: int = 1000,
         retention_hours: int = 24,
+        max_rate_per_second: int = DEFAULT_MAX_RATE_PER_SECOND,
     ) -> None:
         """Initialize website tracker.
 
         Args:
             max_websites: Maximum number of websites to track
             retention_hours: How long to keep statistics (hours)
+            max_rate_per_second: Max updates per second per host (DoS protection)
         """
         self._max_websites = max_websites
         self._retention_hours = retention_hours
+        self._max_rate_per_second = max_rate_per_second
 
         # Statistics by host
         self._websites: Dict[str, WebsiteStats] = {}
+
+        # Rate limiting: track last update time per host
+        self._last_update_time: Dict[str, datetime] = {}
+        self._rate_limited_count: Dict[str, int] = {}  # Track rate-limited requests
 
         logger = get_logger(__name__)
         self._logger = logger
@@ -93,6 +149,27 @@ class WebsiteTracker:
         if not host:
             return
 
+        # Validate hostname to prevent injection attacks
+        if not is_valid_hostname(host):
+            self._logger.warning(f"Invalid hostname rejected: {host[:100]}")
+            return
+
+        # Rate limiting: check if this host is being updated too frequently
+        now = datetime.now()
+        if host in self._last_update_time:
+            time_since_last = (now - self._last_update_time[host]).total_seconds()
+            if time_since_last < (1.0 / self._max_rate_per_second):
+                # Rate limited - increment counter and skip
+                self._rate_limited_count[host] = self._rate_limited_count.get(host, 0) + 1
+
+                # Log rate limiting periodically (every 1000th rate-limited request)
+                if self._rate_limited_count[host] % 1000 == 0:
+                    self._logger.warning(
+                        f"Rate limiting in effect for {host}: "
+                        f"{self._rate_limited_count[host]} requests skipped"
+                    )
+                return
+
         # Update or create stats
         if host in self._websites:
             self._websites[host].update(packet)
@@ -108,6 +185,9 @@ class WebsiteTracker:
 
             self._websites[host] = WebsiteStats(host)
             self._websites[host].update(packet)
+
+        # Update last update time for rate limiting
+        self._last_update_time[host] = now
 
         # Clean up old entries periodically
         self._cleanup()
@@ -184,20 +264,32 @@ class WebsiteTracker:
         return len(self._websites)
 
     def reset(self) -> None:
-        """Reset all statistics."""
+        """Reset all statistics including rate limiting counters."""
         self._websites.clear()
+        self._last_update_time.clear()
+        self._rate_limited_count.clear()
         self._logger.info("Website tracker reset")
+
+    def get_rate_limit_stats(self) -> Dict[str, int]:
+        """Get rate limiting statistics.
+
+        Returns:
+            Dictionary with rate-limited counts per host
+        """
+        return self._rate_limited_count.copy()
 
 
 def create_website_tracker(
     max_websites: int = 1000,
     retention_hours: int = 24,
+    max_rate_per_second: int = WebsiteTracker.DEFAULT_MAX_RATE_PER_SECOND,
 ) -> WebsiteTracker:
     """Create a website tracker instance.
 
     Args:
         max_websites: Maximum number of websites to track
         retention_hours: How long to keep statistics (hours)
+        max_rate_per_second: Max updates per second per host (DoS protection)
 
     Returns:
         Configured WebsiteTracker instance
@@ -205,6 +297,7 @@ def create_website_tracker(
     return WebsiteTracker(
         max_websites=max_websites,
         retention_hours=retention_hours,
+        max_rate_per_second=max_rate_per_second,
     )
 
 

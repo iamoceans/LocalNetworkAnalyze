@@ -1,5 +1,5 @@
 """
-Analysis panel for traffic data analysis.
+Analysis panel for traffic data analysis with neon styling.
 
 Provides tools for filtering, searching, and analyzing
 captured network traffic data.
@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 try:
     import customtkinter as ctk
+    from customtkinter import CTkFont as ctk_CTkFont
     CUSTOMTKINTER_AVAILABLE = True
 except ImportError:
     CUSTOMTKINTER_AVAILABLE = False
@@ -20,6 +21,10 @@ except ImportError:
 from src.core.logger import get_logger
 from src.analysis import AnalysisEngine
 from src.storage import DatabaseManager, PacketFilter, AlertFilter, create_packet_repository, create_alert_repository
+
+# Import theme system
+from src.gui.theme.colors import Colors, NeonColors
+from src.gui.theme.typography import Fonts
 
 
 class AnalysisPanel:
@@ -30,6 +35,7 @@ class AnalysisPanel:
     - Viewing traffic statistics
     - Analyzing protocol distribution
     - Exporting data
+    - Top10 traffic dashboard
     """
 
     def __init__(
@@ -54,6 +60,7 @@ class AnalysisPanel:
         self._frame: Optional[tk.Frame] = None
         self._filter_frame: Optional[tk.Frame] = None
         self._results_frame: Optional[tk.Frame] = None
+        self._top10_frame: Optional[tk.Frame] = None
 
         # Filter widgets
         self._start_time_var: Optional[ctk.StringVar] = None
@@ -65,6 +72,7 @@ class AnalysisPanel:
 
         # Results
         self._current_results: List[Dict[str, Any]] = []
+        self._top10_data: List[Dict[str, Any]] = []
 
         self._logger.info("Analysis panel initialized")
 
@@ -83,32 +91,164 @@ class AnalysisPanel:
 
         # Create sections
         self._create_header()
+        self._create_top10_dashboard()
         self._create_filter_panel()
         self._create_results_display()
+
+        # Initial data load
+        self.refresh_top10_dashboard()
 
         self._logger.info("Analysis panel UI built")
         return self._frame
 
     def _create_header(self) -> None:
-        """Create panel header."""
+        """Create panel header with neon styling."""
         if not CUSTOMTKINTER_AVAILABLE:
             header = ttk.Frame(self._frame)
             header.pack(fill="x", pady=(0, 10))
 
             ttk.Label(
                 header,
-                text="Traffic Analysis",
-                font=("Arial", 16, "bold"),
+                text="📈 Traffic Analysis",
+                font=("Fira Code", 16, "bold"),
             ).pack(side="left")
             return
 
-        # CustomTkinter header
+        # CustomTkinter header with neon styling
         title = ctk.CTkLabel(
             self._frame,
-            text="Traffic Analysis",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            text="📈 Traffic Analysis",
+            font=("Fira Code", 20, "bold"),
+            text_color=Colors.NEON.neon_cyan,
         )
-        title.pack(pady=(0, 10))
+        title.pack(pady=(0, 12))
+
+    def _create_top10_dashboard(self) -> None:
+        """Create Top10 traffic dashboard section."""
+        if not CUSTOMTKINTER_AVAILABLE:
+            self._top10_frame = ttk.LabelFrame(self._frame, text="Top 10 Traffic Destinations")
+            self._top10_frame.pack(fill="x", pady=(0, 10))
+
+            # Create treeview for Top10
+            columns = ("请求地址", "访问URL", "访问端口", "流量size", "最近访问时间")
+            self._top10_tree = ttk.Treeview(
+                self._top10_frame,
+                columns=columns,
+                show="headings",
+                height=6
+            )
+
+            # Configure columns
+            self._top10_tree.heading("请求地址", text="请求地址")
+            self._top10_tree.column("请求地址", width=150)
+
+            self._top10_tree.heading("访问URL", text="访问URL")
+            self._top10_tree.column("访问URL", width=200)
+
+            self._top10_tree.heading("访问端口", text="访问端口")
+            self._top10_tree.column("访问端口", width=80)
+
+            self._top10_tree.heading("流量size", text="流量size")
+            self._top10_tree.column("流量size", width=100)
+
+            self._top10_tree.heading("最近访问时间", text="最近访问时间")
+            self._top10_tree.column("最近访问时间", width=150)
+
+            # Scrollbar
+            scrollbar = ttk.Scrollbar(
+                self._top10_frame,
+                orient="vertical",
+                command=self._top10_tree.yview
+            )
+            self._top10_tree.configure(yscrollcommand=scrollbar.set)
+
+            self._top10_tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+            scrollbar.pack(side="right", fill="y")
+
+            # Refresh button
+            btn_frame = ttk.Frame(self._top10_frame)
+            btn_frame.pack(fill="x", padx=5, pady=(0, 5))
+            ttk.Button(btn_frame, text="Refresh", command=self.refresh_top10_dashboard).pack(side="right")
+            return
+
+        # CustomTkinter Top10 dashboard
+        self._top10_frame = ctk.CTkFrame(self._frame)
+        self._top10_frame.pack(fill="x", pady=(0, 10))
+
+        # Header with title and refresh button
+        header_frame = ctk.CTkFrame(self._top10_frame, fg_color="transparent")
+        header_frame.pack(fill="x", padx=10, pady=(10, 5))
+
+        title = ctk.CTkLabel(
+            header_frame,
+            text="🏆 Top 10 Traffic Destinations",
+            font=ctk_CTkFont(family="Fira Code", size=14, weight="bold"),
+            text_color=Colors.NEON.neon_cyan,
+        )
+        title.pack(side="left")
+
+        refresh_btn = ctk.CTkButton(
+            header_frame,
+            text="Refresh",
+            width=80,
+            command=self.refresh_top10_dashboard,
+            font=ctk_CTkFont(size=11),
+        )
+        refresh_btn.pack(side="right")
+
+        # Content frame with treeview
+        content_frame = ttk.Frame(self._top10_frame)
+        content_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        # Create treeview for Top10
+        columns = ("请求地址", "访问URL", "访问端口", "流量size", "最近访问时间")
+        self._top10_tree = ttk.Treeview(
+            content_frame,
+            columns=columns,
+            show="headings",
+            height=6
+        )
+
+        # Configure columns
+        self._top10_tree.heading("请求地址", text="请求地址")
+        self._top10_tree.column("请求地址", width=150)
+
+        self._top10_tree.heading("访问URL", text="访问URL")
+        self._top10_tree.column("访问URL", width=200)
+
+        self._top10_tree.heading("访问端口", text="访问端口")
+        self._top10_tree.column("访问端口", width=80, anchor="center")
+
+        self._top10_tree.heading("流量size", text="流量size")
+        self._top10_tree.column("流量size", width=100, anchor="e")
+
+        self._top10_tree.heading("最近访问时间", text="最近访问时间")
+        self._top10_tree.column("最近访问时间", width=150)
+
+        # Style the treeview
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Treeview",
+            background=Colors.THEME.bg_card,
+            foreground=Colors.THEME.text_primary,
+            fieldbackground=Colors.THEME.bg_card,
+            borderwidth=0,
+            rowheight=28,
+        )
+        style.configure("Treeview.Heading", background=Colors.THEME.bg_hover, foreground=Colors.NEON.neon_cyan)
+        style.map("Treeview", background=[("selected", Colors.NEON.neon_green_dim)])
+
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(
+            content_frame,
+            orient="vertical",
+            command=self._top10_tree.yview
+        )
+        self._top10_tree.configure(yscrollcommand=scrollbar.set)
+
+        self._top10_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
     def _create_filter_panel(self) -> None:
         """Create filter panel."""
@@ -524,7 +664,7 @@ class AnalysisPanel:
                 try:
                     dt = datetime.fromisoformat(timestamp)
                     time_str = dt.strftime("%H:%M:%S")
-                except:
+                except (ValueError, TypeError):
                     time_str = str(timestamp)
             else:
                 time_str = ""
@@ -543,6 +683,80 @@ class AnalysisPanel:
         # Update count
         if hasattr(self, '_count_var'):
             self._count_var.set(f"Results: {len(results)}")
+
+    def _format_bytes(self, size: int) -> str:
+        """Format bytes to human readable string.
+
+        Args:
+            size: Size in bytes
+
+        Returns:
+            Formatted size string
+        """
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} PB"
+
+    def refresh_top10_dashboard(self) -> None:
+        """Refresh the Top10 traffic dashboard with latest data."""
+        if not self._database:
+            self._logger.warning("No database available for Top10 dashboard")
+            return
+
+        try:
+            # Get top destinations from repository
+            packet_repo = create_packet_repository(self._database)
+            self._top10_data = packet_repo.get_top_destinations(limit=10)
+
+            # Clear existing data
+            if hasattr(self, '_top10_tree'):
+                for item in self._top10_tree.get_children():
+                    self._top10_tree.delete(item)
+
+            # Populate treeview
+            for item in self._top10_data:
+                dst_ip = item.get('dst_ip', '')
+                dst_port = item.get('dst_port', '')
+                total_bytes = item.get('total_bytes', 0)
+                last_seen = item.get('last_seen', '')
+
+                # Format traffic size
+                traffic_size = self._format_bytes(total_bytes)
+
+                # Format last seen time
+                if last_seen:
+                    try:
+                        dt = datetime.fromisoformat(last_seen)
+                        last_seen_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except (ValueError, TypeError):
+                        last_seen_str = str(last_seen)
+                else:
+                    last_seen_str = "-"
+
+                # Access URL - use dst_ip as placeholder (could be enhanced with host resolution)
+                access_url = dst_ip if dst_ip else "-"
+
+                # Format destination address
+                request_addr = f"{dst_ip}:{dst_port}" if dst_port else dst_ip
+
+                # Format port
+                port_str = str(dst_port) if dst_port else "-"
+
+                self._top10_tree.insert("", "end", values=(
+                    request_addr,
+                    access_url,
+                    port_str,
+                    traffic_size,
+                    last_seen_str,
+                ))
+
+            self._logger.info(f"Top10 dashboard refreshed with {len(self._top10_data)} entries")
+
+        except Exception as e:
+            self._logger.error(f"Error refreshing Top10 dashboard: {e}")
+            # Don't show error dialog to avoid spam on auto-refresh
 
     def _show_error(self, message: str) -> None:
         """Show error message.

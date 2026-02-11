@@ -32,6 +32,11 @@ from src.gui.scan_panel import create_scan_panel
 from src.gui.analysis_panel import create_analysis_panel
 from src.gui.alert_panel import create_alert_panel
 
+# Import new theme system
+from src.gui.theme.colors import Colors, NeonColors
+from src.gui.theme.typography import Fonts, Typography
+from src.gui.components import GlassFrame, NeonButton
+
 
 class MainWindow:
     """Main application window.
@@ -83,7 +88,7 @@ class MainWindow:
         self._logger.info("Main window initialized")
 
     def _create_window(self) -> tk.Tk:
-        """Create main window.
+        """Create main window with cyber-security dark theme.
 
         Returns:
             Main window instance
@@ -93,20 +98,14 @@ class MainWindow:
             root.title("Local Network Analyzer")
             root.geometry(f"{self._config.window_width}x{self._config.window_height}")
 
-            # Set appearance mode and theme
-            ctk.set_appearance_mode(self._config.theme)
-            
-            theme = self._config.color_theme
-            if theme == "lavender_glass":
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                theme_path = os.path.join(base_dir, "themes", "lavender_glass.json")
-                if os.path.exists(theme_path):
-                    ctk.set_default_color_theme(theme_path)
-                else:
-                    self._logger.warning(f"Theme file not found: {theme_path}, falling back to blue")
-                    ctk.set_default_color_theme("blue")
-            else:
-                ctk.set_default_color_theme(self._config.color_theme)
+            # Apply cyber-security dark theme
+            ctk.set_appearance_mode("Dark")
+
+            # Use dark theme as base
+            ctk.set_default_color_theme("dark-blue")
+
+            # Configure window background
+            root.configure(fg_color=Colors.THEME.bg_primary)
 
             return root
         else:
@@ -114,17 +113,20 @@ class MainWindow:
             root = tk.Tk()
             root.title("Local Network Analyzer")
             root.geometry(f"{self._config.window_width}x{self._config.window_height}")
+            root.configure(bg=Colors.THEME.bg_primary)
 
             # Configure basic styling
             style = ttk.Style()
-            
-            # Check if theme is valid for ttk
-            theme = self._config.color_theme
-            if theme == "lavender_glass" or theme not in style.theme_names():
-                self._logger.warning(f"Theme '{theme}' not found in standard tkinter, falling back to 'clam'")
-                theme = "clam"
-                
-            style.theme_use(theme)
+            style.theme_use("clam")
+
+            # Apply dark colors
+            style.configure(".", background=Colors.THEME.bg_primary)
+            style.configure("TFrame", background=Colors.THEME.bg_primary)
+            style.configure("TLabelframe", background=Colors.THEME.bg_card, bordercolor=Colors.THEME.border_default)
+            style.configure("TLabelframe.Label", background=Colors.THEME.bg_card, foreground=Colors.THEME.text_primary)
+            style.configure("TButton", background=Colors.THEME.bg_hover, foreground=Colors.THEME.text_primary, borderwidth=0)
+            style.configure("TLabel", background=Colors.THEME.bg_primary, foreground=Colors.THEME.text_primary)
+            style.map("TButton", background=[("active", Colors.NEON.neon_green_dim)])
 
             return root
 
@@ -146,7 +148,7 @@ class MainWindow:
         self._logger.info("UI setup completed")
 
     def _create_main_layout(self) -> None:
-        """Create main window layout.
+        """Create main window layout with glassmorphism sidebar.
 
         Creates navigation frame on the left and content frame on the right.
         """
@@ -155,19 +157,22 @@ class MainWindow:
             self._root.grid_rowconfigure(0, weight=1)
             self._root.grid_columnconfigure(1, weight=1)
 
-            # Navigation frame (sidebar)
+            # Navigation frame (sidebar) with glass effect
             self._navigation_frame = ctk.CTkFrame(
                 self._root,
                 width=240,
-                corner_radius=15
+                corner_radius=16,
+                fg_color=Colors.THEME.bg_card,
+                border_width=1,
+                border_color=Colors.THEME.border_default,
             )
             self._navigation_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
             self._navigation_frame.grid_rowconfigure(5, weight=1)
 
-            # Content frame (main area)
+            # Content frame (main area) - transparent
             self._content_frame = ctk.CTkFrame(
                 self._root,
-                corner_radius=15,
+                corner_radius=16,
                 fg_color="transparent"
             )
             self._content_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 20), pady=20)
@@ -179,11 +184,11 @@ class MainWindow:
 
         else:
             # Standard tkinter layout
-            self._navigation_frame = ttk.Frame(self._root, width=200)
-            self._navigation_frame.pack(side=tk.LEFT, fill=tk.Y)
+            self._navigation_frame = ttk.Frame(self._root, width=200, relief="ridge", borderwidth=1)
+            self._navigation_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
             self._content_frame = ttk.Frame(self._root)
-            self._content_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+            self._content_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
             # Create navigation buttons
             self._create_navigation()
@@ -229,7 +234,7 @@ class MainWindow:
 
             return
 
-        # CustomTkinter navigation
+        # CustomTkinter navigation with neon styling
         nav_buttons = [
             {
                 "key": "navigation.dashboard",
@@ -263,81 +268,109 @@ class MainWindow:
             },
         ]
 
+        # Add title/logo to sidebar
+        title_label = ctk.CTkLabel(
+            self._navigation_frame,
+            text="🔍 Network",
+            font=("Fira Code", 18, "bold"),
+            text_color=Colors.NEON.neon_green,
+        )
+        title_label.pack(pady=(15, 10))
+
+        # Navigation buttons with ghost/neon style
         for btn_config in nav_buttons:
             text = t(btn_config["key"], btn_config["default"])
             btn = ctk.CTkButton(
                 self._navigation_frame,
                 text=f"{text}  {btn_config['icon']}",
-                font=ctk.CTkFont(size=14),
-                height=40,
+                font=("Fira Code", 13),
+                height=42,
                 fg_color="transparent",
-                text_color=["#334155", "#c0caf5"],
-                hover_color=["#E0E7FF", "#2a2d3e"],
+                text_color=Colors.THEME.text_secondary,
+                hover_color=Colors.NEON.neon_green_dim,
                 anchor="w",
+                corner_radius=8,
                 command=btn_config["command"],
+                border_width=0,
             )
-            btn.pack(fill=tk.X, padx=10, pady=5)
+            btn.pack(fill=tk.X, padx=12, pady=4)
 
         # Add language selector
         self._add_language_selector_ctk()
 
         # Add spacer before exit button
-        ctk.CTkLabel(self._navigation_frame, text="").pack(pady=20)
+        ctk.CTkLabel(self._navigation_frame, text="").pack(pady=15)
 
-        # Exit button
+        # Exit button with red accent
         exit_label = t("navigation.exit", "Exit")
         exit_btn = ctk.CTkButton(
             self._navigation_frame,
             text=f"{exit_label}  🚪",
-            font=ctk.CTkFont(size=14),
-            height=40,
-            fg_color=["#E2E8F0", "#2a2d3e"],
-            text_color=["#334155", "#c0caf5"],
-            hover_color=["#CBD5E1", "#414868"],
+            font=("Fira Code", 13),
+            height=42,
+            fg_color="transparent",
+            text_color=Colors.NEON.neon_red,
+            hover_color=Colors.NEON.neon_red_dim,
             anchor="w",
+            corner_radius=8,
             command=self.quit,
+            border_width=0,
         )
-        exit_btn.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+        exit_btn.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(0, 15))
 
     def _create_status_bar(self) -> None:
-        """Create status bar at bottom of window."""
+        """Create status bar at bottom with neon indicators."""
         if CUSTOMTKINTER_AVAILABLE:
-            # Status bar frame
+            # Status bar frame with glass effect
             status_frame = ctk.CTkFrame(
                 self._root,
-                height=30,
+                height=32,
+                fg_color=Colors.THEME.bg_card,
+                corner_radius=8,
             )
-            status_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
+            status_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 15))
 
             # Status variables
             self._status_var = ctk.StringVar(value="Ready")
             self._packet_count_var = ctk.StringVar(value="Packets: 0")
             self._alert_count_var = ctk.StringVar(value="Alerts: 0")
 
-            # Status label
+            # Status label with Fira Code font
             status_label = ctk.CTkLabel(
                 status_frame,
                 textvariable=self._status_var,
                 anchor="w",
-                font=ctk.CTkFont(size=11),
+                font=("Fira Code", 11),
+                text_color=Colors.THEME.text_secondary,
             )
-            status_label.pack(side=tk.LEFT, padx=10)
+            status_label.pack(side=tk.LEFT, padx=12)
 
-            # Packet count
+            # Packet count with neon green accent
             packet_label = ctk.CTkLabel(
                 status_frame,
                 textvariable=self._packet_count_var,
-                font=ctk.CTkFont(size=11),
+                font=("Fira Code", 11),
+                text_color=Colors.NEON.neon_green,
             )
-            packet_label.pack(side=tk.RIGHT, padx=20)
+            packet_label.pack(side=tk.RIGHT, padx=12)
 
-            # Alert count
-            alert_label = ctk.CTkLabel(
+            # Separator
+            separator = ctk.CTkLabel(
+                status_frame,
+                text="|",
+                font=("Fira Code", 11),
+                text_color=Colors.THEME.border_default,
+            )
+            separator.pack(side=tk.RIGHT, padx=(0, 12))
+
+            # Alert count with neon red accent (if alerts > 0)
+            self._alert_label = ctk.CTkLabel(
                 status_frame,
                 textvariable=self._alert_count_var,
-                font=ctk.CTkFont(size=11),
+                font=("Fira Code", 11),
+                text_color=Colors.THEME.text_secondary,
             )
-            alert_label.pack(side=tk.RIGHT, padx=20)
+            self._alert_label.pack(side=tk.RIGHT, padx=(0, 12))
 
         else:
             # Standard tkinter status bar
@@ -490,48 +523,84 @@ class MainWindow:
             label.pack(expand=True)
             return
 
-        # CustomTkinter welcome content
+        # CustomTkinter welcome content with neon styling
         welcome_frame = ctk.CTkFrame(self._content_frame, fg_color="transparent")
         welcome_frame.pack(expand=True, fill="both", padx=20, pady=20)
 
+        # Main title with neon effect
         title_label = ctk.CTkLabel(
             welcome_frame,
             text="Local Network Analyzer",
-            font=ctk.CTkFont(size=32, weight="bold"),
+            font=("Fira Code", 36, "bold"),
+            text_color=Colors.NEON.neon_green,
         )
-        title_label.pack(pady=(20, 10))
+        title_label.pack(pady=(40, 10))
 
+        # Subtitle
         subtitle_label = ctk.CTkLabel(
             welcome_frame,
             text="Monitor and analyze your local network traffic",
-            font=ctk.CTkFont(size=16),
-            text_color="gray",
+            font=("Fira Sans", 16),
+            text_color=Colors.THEME.text_secondary,
         )
-        subtitle_label.pack(pady=(0, 20))
+        subtitle_label.pack(pady=(0, 30))
 
+        # Info message
         info_label = ctk.CTkLabel(
             welcome_frame,
             text="Select a module from the sidebar to begin",
-            font=ctk.CTkFont(size=14),
-            text_color="gray",
+            font=("Fira Code", 13),
+            text_color=Colors.THEME.text_muted,
         )
-        info_label.pack(pady=20)
+        info_label.pack(pady=(0, 40))
 
-        # Features list
+        # Features in glass cards
+        features_frame = ctk.CTkFrame(welcome_frame, fg_color="transparent")
+        features_frame.pack(pady=20)
+
         features = [
-            "📡 Real-time packet capture",
-            "🔍 Network scanning",
-            "📈 Traffic analysis",
-            "⚠️  Anomaly detection",
+            ("📡", "Real-time Packet Capture", "Capture and monitor network packets in real-time"),
+            ("🔍", "Network Scanning", "Discover devices and services on your network"),
+            ("📈", "Traffic Analysis", "Analyze network patterns and protocols"),
+            ("⚠️", "Anomaly Detection", "Detect suspicious activities and threats"),
         ]
 
-        for feature in features:
-            feature_label = ctk.CTkLabel(
-                welcome_frame,
-                text=feature,
-                font=ctk.CTkFont(size=14),
+        for i, (icon, title, desc) in enumerate(features):
+            # Create glass-style card for each feature
+            card = ctk.CTkFrame(
+                features_frame,
+                corner_radius=12,
+                fg_color=Colors.GLASS.bg_color,
+                border_width=1,
+                border_color=Colors.THEME.border_default,
             )
-            feature_label.pack(pady=5)
+            card.pack(fill="x", pady=8, padx=(50, 50))
+
+            # Icon and title
+            header = ctk.CTkFrame(card, fg_color="transparent")
+            header.pack(fill="x", padx=15, pady=(12, 6))
+
+            ctk.CTkLabel(
+                header,
+                text=icon,
+                font=("Segoe UI Emoji", 18),
+            ).pack(side="left", padx=(0, 10))
+
+            ctk.CTkLabel(
+                header,
+                text=title,
+                font=("Fira Code", 13, "bold"),
+                text_color=Colors.THEME.text_primary,
+            ).pack(side="left")
+
+            # Description
+            ctk.CTkLabel(
+                card,
+                text=desc,
+                font=("Fira Sans", 11),
+                text_color=Colors.THEME.text_secondary,
+                anchor="w",
+            ).pack(fill="x", padx=15, pady=(0, 12))
 
     def _show_dashboard(self) -> None:
         """Show dashboard panel."""
@@ -570,13 +639,13 @@ class MainWindow:
                 database=self._database,
             )
 
+            # Build panel UI
+            panel.build()
+
             # Restore capture state if one is running
             # Check if there's an active capture from a previous panel instance
             if hasattr(self, '_active_capture_state') and self._active_capture_state:
                 panel.restore_capture_state(self._active_capture_state)
-
-            # Build panel UI
-            panel.build()
 
             # Save reference to current panel for state restoration
             self._current_panel = panel
@@ -664,12 +733,22 @@ class MainWindow:
                 self._current_panel.destroy()
             except Exception as e:
                 self._logger.warning(f"Error destroying panel: {e}")
+                # Continue even if destroy fails
 
         self._current_panel = None
 
         # Clear all widgets from content frame
-        for widget in self._content_frame.winfo_children():
-            widget.destroy()
+        # Use a more robust approach to handle CustomTkinter widgets
+        try:
+            widgets = self._content_frame.winfo_children()
+            for widget in widgets:
+                try:
+                    widget.destroy()
+                except Exception as e:
+                    # Log but continue with other widgets
+                    self._logger.debug(f"Error destroying widget: {e}")
+        except Exception as e:
+            self._logger.warning(f"Error clearing content frame: {e}")
 
     def _update_status(self, message: str) -> None:
         """Update status bar message.

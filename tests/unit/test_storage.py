@@ -450,3 +450,167 @@ class TestPacketInfoForStorage:
         assert packet.protocol == "TCP"
         assert packet.length == 1500
         assert packet.raw_data == b"test data"
+
+
+@pytest.mark.unit
+class TestSqlPacketRepositoryTopDestinations:
+    """Test SqlPacketRepository.get_top_destinations method."""
+
+    def test_get_top_destinations_empty(self):
+        """Test getting top destinations from empty repository."""
+        from src.storage.repository import SqlPacketRepository
+
+        # Mock session factory
+        session_factory = MagicMock()
+        session = MagicMock()
+        session_factory.return_value.__enter__.return_value = session
+
+        # Mock query to return empty result
+        session.query.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = []
+
+        repo = SqlPacketRepository(session_factory)
+        result = repo.get_top_destinations(limit=10)
+
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_get_top_destinations_with_data(self):
+        """Test getting top destinations with actual data."""
+        from src.storage.repository import SqlPacketRepository
+
+        # Mock session factory
+        session_factory = MagicMock()
+        session = MagicMock()
+        session_factory.return_value.__enter__.return_value = session
+
+        # Create mock result rows
+        mock_row = MagicMock()
+        mock_row.dst_ip = "93.184.216.34"
+        mock_row.dst_port = 443
+        mock_row.total_bytes = 15000
+        mock_row.last_seen = datetime(2024, 1, 1, 12, 0, 0)
+        mock_row.packet_count = 10
+
+        session.query.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = [
+            mock_row
+        ]
+
+        repo = SqlPacketRepository(session_factory)
+        result = repo.get_top_destinations(limit=10)
+
+        assert len(result) == 1
+        assert result[0]['dst_ip'] == "93.184.216.34"
+        assert result[0]['dst_port'] == 443
+        assert result[0]['total_bytes'] == 15000
+        assert result[0]['last_seen'] == "2024-01-01T12:00:00"
+        assert result[0]['packet_count'] == 10
+
+    def test_get_top_destinations_multiple_results(self):
+        """Test getting top destinations with multiple results."""
+        from src.storage.repository import SqlPacketRepository
+
+        # Mock session factory
+        session_factory = MagicMock()
+        session = MagicMock()
+        session_factory.return_value.__enter__.return_value = session
+
+        # Create mock result rows - sorted by total_bytes descending
+        mock_rows = []
+        for i in range(3):
+            row = MagicMock()
+            row.dst_ip = f"{i}.1.1.1"
+            row.dst_port = 80
+            row.total_bytes = (3 - i) * 1000  # 3000, 2000, 1000
+            row.last_seen = datetime(2024, 1, 1, 12, i, 0)
+            row.packet_count = i + 1
+            mock_rows.append(row)
+
+        session.query.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = mock_rows
+
+        repo = SqlPacketRepository(session_factory)
+        result = repo.get_top_destinations(limit=10)
+
+        assert len(result) == 3
+        # Check sorted by total_bytes descending
+        assert result[0]['total_bytes'] == 3000
+        assert result[1]['total_bytes'] == 2000
+        assert result[2]['total_bytes'] == 1000
+
+    def test_get_top_destinations_respects_limit(self):
+        """Test that limit parameter is respected."""
+        from src.storage.repository import SqlPacketRepository
+
+        # Mock session factory
+        session_factory = MagicMock()
+        session = MagicMock()
+        session_factory.return_value.__enter__.return_value = session
+
+        # Create 5 mock rows
+        mock_rows = []
+        for i in range(5):
+            row = MagicMock()
+            row.dst_ip = f"{i}.1.1.1"
+            row.dst_port = 80
+            row.total_bytes = (5 - i) * 1000
+            row.last_seen = datetime(2024, 1, 1, 12, 0, 0)
+            row.packet_count = 1
+            mock_rows.append(row)
+
+        # Configure limit mock
+        limit_mock = MagicMock()
+        limit_mock.all.return_value = mock_rows
+
+        session.query.return_value.group_by.return_value.order_by.return_value.limit = MagicMock(
+            return_value=limit_mock
+        )
+
+        repo = SqlPacketRepository(session_factory)
+
+        # Request only top 3
+        result = repo.get_top_destinations(limit=3)
+
+        # Verify limit was called with correct value
+        session.query.return_value.group_by.return_value.order_by.return_value.limit.assert_called_with(3)
+
+    def test_get_top_destinations_with_null_values(self):
+        """Test handling of null total_bytes and last_seen."""
+        from src.storage.repository import SqlPacketRepository
+
+        # Mock session factory
+        session_factory = MagicMock()
+        session = MagicMock()
+        session_factory.return_value.__enter__.return_value = session
+
+        # Create mock row with null values
+        mock_row = MagicMock()
+        mock_row.dst_ip = "1.1.1.1"
+        mock_row.dst_port = 80
+        mock_row.total_bytes = None
+        mock_row.last_seen = None
+        mock_row.packet_count = None
+
+        session.query.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = [
+            mock_row
+        ]
+
+        repo = SqlPacketRepository(session_factory)
+        result = repo.get_top_destinations(limit=10)
+
+        assert len(result) == 1
+        assert result[0]['total_bytes'] == 0  # Should default to 0
+        assert result[0]['last_seen'] is None
+        assert result[0]['packet_count'] == 0  # Should default to 0
+
+    def test_get_top_destinations_handles_exception(self):
+        """Test that exceptions are properly wrapped."""
+        from src.storage.repository import SqlPacketRepository
+        from src.core.exceptions import StorageError
+
+        # Mock session factory that raises exception
+        session_factory = MagicMock()
+        session_factory.return_value.__enter__.side_effect = Exception("Database error")
+
+        repo = SqlPacketRepository(session_factory)
+
+        with pytest.raises(StorageError, match="Failed to get top destinations"):
+            repo.get_top_destinations(limit=10)

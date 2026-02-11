@@ -44,6 +44,7 @@ def create_capture(
     buffer_size: int = 1000,
     promiscuous: bool = True,
     timeout: Optional[int] = None,
+    monitor_mode: bool = False,
     **kwargs,
 ) -> PacketCapture:
     """Create a packet capture instance.
@@ -58,6 +59,7 @@ def create_capture(
         buffer_size: Maximum packets to buffer
         promiscuous: Enable promiscuous mode
         timeout: Capture timeout in seconds (None = no timeout)
+        monitor_mode: Enable WiFi monitor mode (RFMON) for capturing all WiFi traffic
         **kwargs: Additional backend-specific arguments
 
     Returns:
@@ -75,6 +77,9 @@ def create_capture(
         >>>
         >>> # Create with filter
         >>> capture = create_capture(filter="tcp port 80")
+        >>>
+        >>> # Create with WiFi monitor mode to capture all traffic
+        >>> capture = create_capture(monitor_mode=True)
     """
     if backend == "scapy":
         return ScapyCapture(
@@ -83,6 +88,7 @@ def create_capture(
             buffer_size=buffer_size,
             promiscuous=promiscuous,
             timeout=timeout,
+            monitor_mode=monitor_mode,
         )
     else:
         raise ValueError(

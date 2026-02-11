@@ -2,7 +2,7 @@
 Dashboard panel for real-time monitoring.
 
 Provides an at-a-glance view of network activity with live
-statistics, charts, and recent alerts.
+statistics, charts, and recent alerts with cyber-security styling.
 """
 
 import tkinter as tk
@@ -24,6 +24,11 @@ from src.capture.base import PacketCapture
 from src.analysis import AnalysisEngine
 from src.detection import DetectionEngine
 from src.storage import DatabaseManager
+
+# Import new theme system
+from src.gui.theme.colors import Colors, NeonColors
+from src.gui.theme.typography import Fonts
+from src.gui.components import StatCard, GlassFrame
 
 
 class DashboardPanel:
@@ -77,7 +82,7 @@ class DashboardPanel:
 
         # UI components
         self._frame: Optional[tk.Frame] = None
-        self._stats_frame: Optional[tk.Frame] = None
+        self._stat_cards: List[StatCard] = []  # Store stat card references
         self._protocol_frame: Optional[tk.Frame] = None
         self._connections_frame: Optional[tk.Frame] = None
         self._alerts_frame: Optional[tk.Frame] = None
@@ -110,7 +115,7 @@ class DashboardPanel:
         return self._frame
 
     def _create_header(self) -> None:
-        """Create dashboard header."""
+        """Create dashboard header with neon styling."""
         if not CUSTOMTKINTER_AVAILABLE:
             header = ttk.Frame(self._frame)
             header.pack(fill="x", pady=(0, 10))
@@ -118,27 +123,29 @@ class DashboardPanel:
             ttk.Label(
                 header,
                 text="Network Dashboard",
-                font=("Arial", 18, "bold"),
+                font=("Fira Code", 18, "bold"),
             ).pack(side="left")
 
             ttk.Label(
                 header,
                 text=f"Last updated: {datetime.now().strftime('%H:%M:%S')}",
-                font=("Arial", 10),
+                font=("Fira Code", 10),
             ).pack(side="right")
             return
 
-        # CustomTkinter header
-        header = ctk.CTkFrame(self._frame, height=50)
-        header.pack(fill="x", pady=(0, 10))
+        # CustomTkinter header with neon styling
+        header = ctk.CTkFrame(self._frame, fg_color="transparent", height=40)
+        header.pack(fill="x", pady=(0, 15))
         header.pack_propagate(False)
 
+        # Title with neon green
         title = ctk.CTkLabel(
             header,
             text="Network Dashboard",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            font=("Fira Code", 20, "bold"),
+            text_color=Colors.NEON.neon_green,
         )
-        title.pack(side="left", padx=20, pady=10)
+        title.pack(side="left", padx=10, pady=5)
 
         self._update_time_var = ctk.StringVar(
             value=datetime.now().strftime("%H:%M:%S")
@@ -146,13 +153,13 @@ class DashboardPanel:
         update_label = ctk.CTkLabel(
             header,
             textvariable=self._update_time_var,
-            font=ctk.CTkFont(size=11),
-            text_color="gray",
+            font=("Fira Code", 11),
+            text_color=Colors.THEME.text_muted,
         )
-        update_label.pack(side="right", padx=20, pady=10)
+        update_label.pack(side="right", padx=10, pady=5)
 
     def _create_statistics_grid(self) -> None:
-        """Create statistics summary grid."""
+        """Create statistics summary grid with neon stat cards."""
         if not CUSTOMTKINTER_AVAILABLE:
             self._stats_frame = ttk.LabelFrame(self._frame, text="Statistics")
             self._stats_frame.pack(fill="x", pady=(0, 10))
@@ -161,14 +168,18 @@ class DashboardPanel:
             grid.pack(fill="both", expand=True, padx=5, pady=5)
 
             # Create 6 stat cards
-            for i, label in enumerate([
-                "Total Packets", "Total Bytes", "Packet Rate",
-                "Byte Rate", "Active Connections", "Recent Alerts"
+            for i, (label, icon) in enumerate([
+                ("Total Packets", "📦"),
+                ("Total Bytes", "💾"),
+                ("Packet Rate", "📊"),
+                ("Byte Rate", "⚡"),
+                ("Active Connections", "🔗"),
+                ("Recent Alerts", "⚠️"),
             ]):
                 card = ttk.Frame(grid, relief="ridge", borderwidth=1)
                 card.grid(row=i//3, column=i%3, padx=5, pady=5, sticky="nsew")
 
-                ttk.Label(card, text=label, font=("Arial", 9)).pack(pady=2)
+                ttk.Label(card, text=f"{icon} {label}", font=("Arial", 9)).pack(pady=2)
 
                 value_var = tk.StringVar(value="--")
                 ttk.Label(
@@ -196,81 +207,83 @@ class DashboardPanel:
                 grid.columnconfigure(i, weight=1)
             return
 
-        # CustomTkinter statistics
-        self._stats_frame = ctk.CTkFrame(self._frame)
-        self._stats_frame.pack(fill="x", pady=(0, 10))
+        # CustomTkinter statistics with StatCard component
+        self._stats_frame = ctk.CTkFrame(self._frame, fg_color="transparent")
+        self._stats_frame.pack(fill="x", pady=(0, 15))
 
-        # Title
-        title = ctk.CTkLabel(
-            self._stats_frame,
-            text="Traffic Statistics",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        )
-        title.pack(pady=(10, 5))
-
-        # Stats grid
+        # Stats grid container
         grid = ctk.CTkFrame(self._stats_frame, fg_color="transparent")
         grid.pack(fill="x", padx=10, pady=10)
 
-        # Create stat cards
-        stats = [
-            ("Total Packets", "📦", self._get_total_packets),
-            ("Total Bytes", "💾", self._get_total_bytes),
-            ("Packet Rate", "📊", self._get_packet_rate),
-            ("Byte Rate", "⚡", self._get_byte_rate),
-            ("Active Connections", "🔗", self._get_active_connections),
-            ("Recent Alerts", "⚠️", self._get_alert_count),
+        # Define stat configurations
+        stats_config = [
+            {
+                "icon": "📦",
+                "label": "Total Packets",
+                "color": "none",
+                "getter": self._get_total_packets,
+                "var_ref": "_total_packets_var",
+            },
+            {
+                "icon": "💾",
+                "label": "Total Bytes",
+                "color": "none",
+                "getter": self._get_total_bytes,
+                "var_ref": "_total_bytes_var",
+            },
+            {
+                "icon": "📊",
+                "label": "Packet Rate",
+                "color": "green",
+                "getter": self._get_packet_rate,
+                "var_ref": "_packet_rate_var",
+            },
+            {
+                "icon": "⚡",
+                "label": "Byte Rate",
+                "color": "cyan",
+                "getter": self._get_byte_rate,
+                "var_ref": "_byte_rate_var",
+            },
+            {
+                "icon": "🔗",
+                "label": "Active Connections",
+                "color": "none",
+                "getter": self._get_active_connections,
+                "var_ref": "_active_connections_var",
+            },
+            {
+                "icon": "⚠️",
+                "label": "Recent Alerts",
+                "color": "red",
+                "getter": self._get_alert_count,
+                "var_ref": "_alert_count_var",
+            },
         ]
 
-        for i, (label, icon, _) in enumerate(stats):
-            card = ctk.CTkFrame(grid)
-            card.grid(row=i//3, column=i%3, padx=10, pady=10, sticky="nsew")
-
-            # Icon and label
-            header = ctk.CTkFrame(card, fg_color="transparent")
-            header.pack(fill="x", padx=10, pady=(8, 2))
-
-            ctk.CTkLabel(
-                header,
-                text=icon,
-                font=ctk.CTkFont(size=16),
-            ).pack(side="left")
-
-            ctk.CTkLabel(
-                header,
-                text=label,
-                font=ctk.CTkFont(size=11),
-                text_color="gray",
-            ).pack(side="left", padx=5)
-
-            # Value
-            value_var = ctk.StringVar(value="--")
-            ctk.CTkLabel(
-                card,
-                textvariable=value_var,
-                font=ctk.CTkFont(size=20, weight="bold"),
-            ).pack(pady=(0, 8))
+        # Create stat cards
+        for i, config in enumerate(stats_config):
+            card = StatCard(
+                grid,
+                icon=config["icon"],
+                label=config["label"],
+                value="--",
+                color=config["color"],
+                size="small",
+                compact=True,
+            )
+            card.grid(row=i//3, column=i%3, padx=5, pady=5, sticky="nsew")
 
             # Store reference
-            if i == 0:
-                self._total_packets_var = value_var
-            elif i == 1:
-                self._total_bytes_var = value_var
-            elif i == 2:
-                self._packet_rate_var = value_var
-            elif i == 3:
-                self._byte_rate_var = value_var
-            elif i == 4:
-                self._active_connections_var = value_var
-            elif i == 5:
-                self._alert_count_var = value_var
+            self._stat_cards.append(card)
+            setattr(self, config["var_ref"], card)
 
         # Configure grid weights
         for i in range(3):
             grid.columnconfigure(i, weight=1)
 
     def _create_content_area(self) -> None:
-        """Create main content area with panels."""
+        """Create main content area with glass-effect panels."""
         if not CUSTOMTKINTER_AVAILABLE:
             content = ttk.Frame(self._frame)
             content.pack(fill="both", expand=True)
@@ -293,44 +306,69 @@ class DashboardPanel:
             self._alerts_frame.pack(fill="both", expand=True)
             return
 
-        # CustomTkinter content
+        # CustomTkinter content with glass-effect panels
         content = ctk.CTkFrame(self._frame, fg_color="transparent")
         content.pack(fill="both", expand=True)
 
         # Left column
         left = ctk.CTkFrame(content, fg_color="transparent")
-        left.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        left.pack(side="left", fill="both", expand=True, padx=(0, 8))
 
-        self._protocol_frame = ctk.CTkFrame(left)
-        self._protocol_frame.pack(fill="both", expand=True, pady=(0, 5))
+        self._protocol_frame = ctk.CTkFrame(
+            left,
+            corner_radius=12,
+            fg_color=Colors.GLASS.bg_color,
+            border_width=1,
+            border_color=Colors.THEME.border_default,
+        )
+        self._protocol_frame.pack(fill="both", expand=True, pady=(0, 8))
 
-        self._connections_frame = ctk.CTkFrame(left)
+        self._connections_frame = ctk.CTkFrame(
+            left,
+            corner_radius=12,
+            fg_color=Colors.GLASS.bg_color,
+            border_width=1,
+            border_color=Colors.THEME.border_default,
+        )
         self._connections_frame.pack(fill="both", expand=True)
 
         # Right column - Alerts and Top Websites
         right = ctk.CTkFrame(content, fg_color="transparent")
-        right.pack(side="right", fill="both", expand=True, padx=(5, 0))
+        right.pack(side="right", fill="both", expand=True, padx=(8, 0))
 
-        self._alerts_frame = ctk.CTkFrame(right)
-        self._alerts_frame.pack(fill="both", expand=True, pady=(0, 5))
+        self._alerts_frame = ctk.CTkFrame(
+            right,
+            corner_radius=12,
+            fg_color=Colors.GLASS.bg_color,
+            border_width=1,
+            border_color=Colors.THEME.border_default,
+        )
+        self._alerts_frame.pack(fill="both", expand=True, pady=(0, 8))
 
-        self._websites_frame = ctk.CTkFrame(right)
+        self._websites_frame = ctk.CTkFrame(
+            right,
+            corner_radius=12,
+            fg_color=Colors.GLASS.bg_color,
+            border_width=1,
+            border_color=Colors.THEME.border_default,
+        )
         self._websites_frame.pack(fill="both", expand=True)
 
-        # Add titles
+        # Add titles with neon styling
         self._add_frame_title(self._protocol_frame, "Protocol Distribution")
         self._add_frame_title(self._connections_frame, "Top Connections")
         self._add_frame_title(self._alerts_frame, "Recent Alerts")
         self._add_frame_title(self._websites_frame, "Top Visited Websites")
 
     def _add_frame_title(self, frame: tk.Frame, title: str) -> None:
-        """Add title to frame."""
+        """Add title to frame with neon styling."""
         label = ctk.CTkLabel(
             frame,
             text=title,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=("Fira Code", 13, "bold"),
+            text_color=Colors.NEON.neon_cyan,
         )
-        label.pack(pady=(10, 5))
+        label.pack(pady=(10, 8))
 
     def _start_updates(self) -> None:
         """Start periodic updates."""
@@ -360,19 +398,22 @@ class DashboardPanel:
     def _update_display(self) -> None:
         """Update dashboard display with latest data."""
         try:
-            # Update statistics
-            if self._total_packets_var:
-                self._total_packets_var.set(self._get_total_packets())
-            if self._total_bytes_var:
-                self._total_bytes_var.set(self._get_total_bytes())
-            if self._packet_rate_var:
-                self._packet_rate_var.set(self._get_packet_rate())
-            if self._byte_rate_var:
-                self._byte_rate_var.set(self._get_byte_rate())
-            if self._active_connections_var:
-                self._active_connections_var.set(self._get_active_connections())
-            if self._alert_count_var:
-                self._alert_count_var.set(self._get_alert_count())
+            # Update stat cards using StatCard.update_value()
+            total_packets = self._get_total_packets()
+            total_bytes = self._get_total_bytes()
+            packet_rate = self._get_packet_rate()
+            byte_rate = self._get_byte_rate()
+            active_connections = self._get_active_connections()
+            alert_count = self._get_alert_count()
+
+            # Update StatCard components (for CustomTkinter)
+            if self._stat_cards:
+                self._stat_cards[0].update_value(total_packets)
+                self._stat_cards[1].update_value(total_bytes)
+                self._stat_cards[2].update_value(packet_rate)
+                self._stat_cards[3].update_value(byte_rate)
+                self._stat_cards[4].update_value(active_connections)
+                self._stat_cards[5].update_value(alert_count)
 
             # Update timestamp
             if hasattr(self, '_update_time_var'):

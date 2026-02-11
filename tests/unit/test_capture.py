@@ -454,3 +454,308 @@ class TestGetAvailableInterfaces:
             assert "name" in iface
             assert "address" in iface
             assert "description" in iface
+
+
+@pytest.mark.unit
+class TestTrafficAggregator:
+    """Test TrafficAggregator class."""
+
+    def test_init_default(self):
+        """Test initialization with default max_entries."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+        assert aggregator._max_entries == 30
+
+    def test_init_custom_max_entries(self):
+        """Test initialization with custom max_entries."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator(max_entries=100)
+        assert aggregator._max_entries == 100
+
+    def test_add_single_packet(self):
+        """Test adding a single packet."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+        packet = PacketInfo(
+            timestamp=datetime(2024, 1, 1, 12, 0, 0),
+            src_ip="192.168.1.1",
+            dst_ip="93.184.216.34",
+            src_port=12345,
+            dst_port=80,
+            protocol="TCP",
+            length=1500,
+            raw_data=b"GET / HTTP/1.1",
+        )
+
+        aggregator.add_packet(packet)
+
+        top = aggregator.get_top_destinations(10)
+        assert len(top) == 1
+        assert top[0]['dst_ip'] == "93.184.216.34"
+        assert top[0]['dst_port'] == 80
+        assert top[0]['total_bytes'] == 1500
+        assert top[0]['packet_count'] == 1
+
+    def test_add_multiple_packets_same_destination(self):
+        """Test adding multiple packets to same destination."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+
+        for i in range(5):
+            packet = PacketInfo(
+                timestamp=datetime(2024, 1, 1, 12, i, 0),
+                src_ip="192.168.1.1",
+                dst_ip="93.184.216.34",
+                src_port=12345 + i,
+                dst_port=80,
+                protocol="TCP",
+                length=1000 + i * 100,
+                raw_data=b"data",
+            )
+            aggregator.add_packet(packet)
+
+        top = aggregator.get_top_destinations(10)
+        assert len(top) == 1
+        assert top[0]['total_bytes'] == 6000  # Sum: 1000+1100+1200+1300+1400
+        assert top[0]['packet_count'] == 5
+
+    def test_add_multiple_destinations(self):
+        """Test adding packets to multiple destinations."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+
+        # Add packets to 3 different destinations
+        packets_data = [
+            ("1.1.1.1", 80, 5000),
+            ("2.2.2.2", 443, 8000),
+            ("3.3.3.3", 22, 3000),
+        ]
+
+        for dst_ip, dst_port, length in packets_data:
+            packet = PacketInfo(
+                timestamp=datetime(2024, 1, 1, 12, 0, 0),
+                src_ip="192.168.1.1",
+                dst_ip=dst_ip,
+                src_port=12345,
+                dst_port=dst_port,
+                protocol="TCP",
+                length=length,
+                raw_data=b"data",
+            )
+            aggregator.add_packet(packet)
+
+        top = aggregator.get_top_destinations(10)
+
+        # Should return 3 destinations, sorted by traffic
+        assert len(top) == 3
+        assert top[0]['dst_ip'] == "2.2.2.2"  # 8000 bytes
+        assert top[1]['dst_ip'] == "1.1.1.1"  # 5000 bytes
+        assert top[2]['dst_ip'] == "3.3.3.3"  # 3000 bytes
+
+    def test_get_top_destinations_respects_limit(self):
+        """Test that get_top_destinations respects limit parameter."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+
+        # Add 10 destinations
+        for i in range(10):
+            packet = PacketInfo(
+                timestamp=datetime(2024, 1, 1, 12, 0, 0),
+                src_ip="192.168.1.1",
+                dst_ip=f"{i}.1.1.1",
+                src_port=12345,
+                dst_port=80,
+                protocol="TCP",
+                length=1000 * (10 - i),  # Reverse order to test sorting
+                raw_data=b"data",
+            )
+            aggregator.add_packet(packet)
+
+        top_5 = aggregator.get_top_destinations(5)
+        assert len(top_5) == 5
+
+        top_10 = aggregator.get_top_destinations(10)
+        assert len(top_10) == 10
+
+    def test_packet_with_host_and_url(self):
+        """Test packet with host and URL information."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+
+        packet = PacketInfo(
+            timestamp=datetime(2024, 1, 1, 12, 0, 0),
+            src_ip="192.168.1.1",
+            dst_ip="93.184.216.34",
+            src_port=12345,
+            dst_port=80,
+            protocol="TCP",
+            length=1500,
+            raw_data=b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+            host="example.com",
+            url="http://example.com/",
+        )
+
+        aggregator.add_packet(packet)
+
+        top = aggregator.get_top_destinations(10)
+        assert len(top) == 1
+        assert top[0]['host'] == "example.com"
+        assert top[0]['url'] == "http://example.com/"
+
+    def test_packet_with_none_port(self):
+        """Test packet with None destination port."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+
+        packet = PacketInfo(
+            timestamp=datetime(2024, 1, 1, 12, 0, 0),
+            src_ip="192.168.1.1",
+            dst_ip="1.1.1.1",
+            src_port=None,
+            dst_port=None,
+            protocol="ICMP",
+            length=64,
+            raw_data=b"icmp data",
+        )
+
+        aggregator.add_packet(packet)
+
+        top = aggregator.get_top_destinations(10)
+        assert len(top) == 1
+        assert top[0]['dst_port'] is None
+
+    def test_get_stats_snapshot(self):
+        """Test getting statistics snapshot for change detection."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+
+        # Empty snapshot
+        snapshot = aggregator.get_stats_snapshot()
+        assert len(snapshot) == 0
+
+        # Add packets
+        packet = PacketInfo(
+            timestamp=datetime(2024, 1, 1, 12, 0, 0),
+            src_ip="192.168.1.1",
+            dst_ip="1.1.1.1",
+            src_port=12345,
+            dst_port=80,
+            protocol="TCP",
+            length=1500,
+            raw_data=b"data",
+        )
+        aggregator.add_packet(packet)
+
+        snapshot = aggregator.get_stats_snapshot()
+        assert len(snapshot) == 1
+        assert "1.1.1.1:80" in snapshot
+        assert snapshot["1.1.1.1:80"] == 1500
+
+    def test_clear(self):
+        """Test clearing all statistics."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+
+        # Add some packets
+        for i in range(3):
+            packet = PacketInfo(
+                timestamp=datetime(2024, 1, 1, 12, 0, 0),
+                src_ip="192.168.1.1",
+                dst_ip=f"{i}.1.1.1",
+                src_port=12345,
+                dst_port=80,
+                protocol="TCP",
+                length=1000,
+                raw_data=b"data",
+            )
+            aggregator.add_packet(packet)
+
+        assert len(aggregator.get_stats_snapshot()) == 3
+
+        aggregator.clear()
+
+        assert len(aggregator.get_stats_snapshot()) == 0
+        assert aggregator._cached_top is None
+
+    def test_caching_behavior(self):
+        """Test that caching works for repeated calls."""
+        from src.gui.capture_panel import TrafficAggregator
+
+        aggregator = TrafficAggregator()
+
+        packet = PacketInfo(
+            timestamp=datetime(2024, 1, 1, 12, 0, 0),
+            src_ip="192.168.1.1",
+            dst_ip="1.1.1.1",
+            src_port=12345,
+            dst_port=80,
+            protocol="TCP",
+            length=1500,
+            raw_data=b"data",
+        )
+        aggregator.add_packet(packet)
+
+        # First call builds cache
+        top1 = aggregator.get_top_destinations(10)
+        assert top1 is not None
+
+        # Second call with same or smaller limit should use cache
+        top2 = aggregator.get_top_destinations(10)
+        assert top2 is not None
+
+        # Results should be identical
+        assert len(top1) == len(top2)
+        assert top1[0]['dst_ip'] == top2[0]['dst_ip']
+
+    def test_thread_safety(self):
+        """Test that aggregator is thread-safe."""
+        from src.gui.capture_panel import TrafficAggregator
+        import threading
+
+        aggregator = TrafficAggregator(max_entries=100)
+        errors = []
+
+        def add_packets(thread_id):
+            try:
+                for i in range(50):
+                    packet = PacketInfo(
+                        timestamp=datetime(2024, 1, 1, 12, 0, 0),
+                        src_ip="192.168.1.1",
+                        dst_ip=f"{thread_id}.{i}.1.1",
+                        src_port=12345,
+                        dst_port=80,
+                        protocol="TCP",
+                        length=100,
+                        raw_data=b"data",
+                    )
+                    aggregator.add_packet(packet)
+            except Exception as e:
+                errors.append(e)
+
+        # Create multiple threads
+        threads = []
+        for i in range(3):
+            t = threading.Thread(target=add_packets, args=(i,))
+            threads.append(t)
+            t.start()
+
+        # Wait for all threads to complete
+        for t in threads:
+            t.join()
+
+        # No errors should have occurred
+        assert len(errors) == 0
+
+        # Should have all packets aggregated
+        snapshot = aggregator.get_stats_snapshot()
+        assert len(snapshot) == 150  # 3 threads * 50 packets

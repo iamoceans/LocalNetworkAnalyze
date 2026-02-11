@@ -1,5 +1,5 @@
 """
-Network scan panel.
+Network scan panel with neon styling.
 
 Provides controls for network discovery and port scanning,
 with real-time results display.
@@ -22,6 +22,10 @@ except ImportError:
 from src.core.logger import get_logger
 from src.scan import NetworkScannerWrapper as NetworkScanner, create_network_scanner
 from src.storage import DatabaseManager
+
+# Import theme system
+from src.gui.theme.colors import Colors, NeonColors
+from src.gui.theme.typography import Fonts
 
 
 class ScanPanel:
@@ -98,25 +102,26 @@ class ScanPanel:
         return self._frame
 
     def _create_header(self) -> None:
-        """Create panel header."""
+        """Create panel header with neon styling."""
         if not CUSTOMTKINTER_AVAILABLE:
             header = ttk.Frame(self._frame)
             header.pack(fill="x", pady=(0, 10))
 
             ttk.Label(
                 header,
-                text="Network Scan",
-                font=("Arial", 16, "bold"),
+                text="🔍 Network Scan",
+                font=("Fira Code", 16, "bold"),
             ).pack(side="left")
             return
 
-        # CustomTkinter header
+        # CustomTkinter header with neon styling
         title = ctk.CTkLabel(
             self._frame,
-            text="Network Scanner",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            text="🔍 Network Scanner",
+            font=("Fira Code", 20, "bold"),
+            text_color=Colors.NEON.neon_yellow,
         )
-        title.pack(pady=(0, 10))
+        title.pack(pady=(0, 12))
 
     def _create_control_panel(self) -> None:
         """Create control panel for scan settings."""

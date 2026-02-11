@@ -7,7 +7,11 @@ Provides helpers for network interface identification and routing.
 import socket
 import psutil
 import subprocess
+import logging
 from typing import Optional, Tuple
+
+from src.core.logger import get_logger
+logger = get_logger(__name__)
 
 def get_active_wifi_interface() -> Optional[Tuple[str, str]]:
     """
@@ -29,7 +33,8 @@ def get_active_wifi_interface() -> Optional[Tuple[str, str]]:
         s.connect(("8.8.8.8", 80))
         local_ip = s.getsockname()[0]
         s.close()
-    except Exception:
+    except OSError as e:
+        logger.warning(f"Failed to determine local IP via socket connection: {e}")
         return None
 
     if not local_ip:
@@ -60,17 +65,20 @@ def get_active_wifi_interface() -> Optional[Tuple[str, str]]:
     # Heuristic 2: Use system commands for stricter verification (Windows only)
     if not is_wifi:
         try:
-            output = subprocess.check_output(
-                "netsh wlan show interfaces", 
-                shell=True, 
+            # 使用列表参数避免shell=True的安全风险
+            result = subprocess.run(
+                ['netsh', 'wlan', 'show', 'interfaces'],
+                capture_output=True,
+                text=False,
                 stderr=subprocess.STDOUT
-            ).decode('gbk', errors='ignore')
-            
+            )
+            output = result.stdout.decode('gbk', errors='ignore')
+
             # If the interface name appears in netsh wlan output, it's a Wi-Fi interface
             if target_iface_name in output:
                 is_wifi = True
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:
+            logger.debug(f"Failed to verify Wi-Fi interface via netsh: {e}")
 
     if is_wifi:
         return target_iface_name, local_ip

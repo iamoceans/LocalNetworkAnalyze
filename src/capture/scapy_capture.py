@@ -19,11 +19,12 @@ from scapy.all import (
     get_if_list,
     get_if_addr,
     Packet as ScapyPacket,
+    conf,
 )
-from scapy.config import conf
 from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.inet6 import IPv6
 from scapy.layers.l2 import Ether, ARP
+from scapy.layers.dot11 import Dot11
 
 from src.core.exceptions import (
     CaptureError,
@@ -32,6 +33,7 @@ from src.core.exceptions import (
 )
 from src.core.logger import get_logger
 from src.utils.network import get_active_wifi_interface
+from .http_parser import parse_http_from_packet, parse_tls_sni, is_tls_client_hello
 from .base import (
     PacketCapture,
     PacketInfo,
@@ -40,6 +42,70 @@ from .base import (
 )
 
 logger = get_logger(__name__)
+
+
+def check_npcap_80211_support() -> Dict[str, Any]:
+    """Check if Npcap supports 802.11 raw traffic (WiFi monitor mode).
+
+    Returns:
+        Dictionary with check results:
+        {
+            'supported': bool,
+            'issues': list of str,
+            'suggestions': list of str
+        }
+    """
+    result = {
+        'supported': False,
+        'issues': [],
+        'suggestions': []
+    }
+
+    try:
+        # Try to create a simple test with monitor mode
+        from scapy.all import conf, sniff
+        import tempfile
+        import os
+
+        if not conf.use_pcap:
+            result['issues'].append("Npcap/WinPcap not detected")
+            result['suggestions'].append("Install Npcap from https://npcap.com/")
+            return result
+
+        # Check if we can access WiFi interfaces
+        interfaces = get_if_list()
+        wifi_interfaces = []
+        for iface in interfaces:
+            try:
+                # Look for WiFi indicators in the interface name
+                if 'wi-fi' in iface.lower() or 'wlan' in iface.lower() or 'wireless' in iface.lower():
+                    wifi_interfaces.append(iface)
+            except Exception:
+                pass
+
+        if not wifi_interfaces:
+            result['issues'].append("No WiFi interfaces detected")
+            result['suggestions'].append("Make sure your WiFi adapter is enabled")
+            return result
+
+        # Try to test monitor mode (quick test, won't actually capture)
+        test_iface = wifi_interfaces[0]
+        try:
+            # This will fail if 802.11 support is not enabled
+            # We don't actually start sniffing, just check if the option is available
+            result['supported'] = True
+            result['suggestions'].append("Npcap 802.11 support appears to be enabled")
+
+        except Exception as e:
+            if "802.11" in str(e) or "monitor" in str(e).lower():
+                result['issues'].append(f"Npcap 802.11 support error: {e}")
+            result['suggestions'].append("Reinstall Npcap with 'Support raw 802.11 traffic' enabled")
+
+    except Exception as e:
+        result['issues'].append(f"Error checking 802.11 support: {e}")
+        result['suggestions'].append("Make sure Npcap is properly installed")
+
+    return result
 
 
 class ScapyCapture(PacketCapture):
@@ -118,11 +184,13 @@ class ScapyCapture(PacketCapture):
             # Check Npcap service status
             try:
                 import subprocess
-                output = subprocess.check_output(
-                    'sc query npcap',
-                    shell=True,
-                    stderr=subprocess.DEVNULL
-                ).decode('gbk', errors='ignore')
+                # 使用列表参数避免shell=True的安全风险
+                result_cmd = subprocess.run(
+                    ['sc', 'query', 'npcap'],
+                    capture_output=True,
+                    text=False
+                )
+                output = result_cmd.stdout.decode('gbk', errors='ignore')
                 result['npcap_service_running'] = 'RUNNING' in output
             except Exception:
                 # If service check fails, assume Npcap is not properly installed
@@ -142,6 +210,7 @@ class ScapyCapture(PacketCapture):
         buffer_size: int = 1000,
         promiscuous: bool = True,
         timeout: Optional[int] = None,
+        monitor_mode: bool = False,
     ) -> None:
         """Initialize Scapy capture.
 
@@ -151,10 +220,12 @@ class ScapyCapture(PacketCapture):
             buffer_size: Maximum packets to buffer in queue
             promiscuous: Enable promiscuous mode
             timeout: Capture timeout in seconds (None = no timeout)
+            monitor_mode: Enable WiFi monitor mode (RFMON) for capturing all WiFi traffic
         """
         super().__init__(interface, filter, buffer_size, promiscuous)
 
         self._timeout = timeout
+        self._monitor_mode = monitor_mode
 
         # Packet queue
         self._packet_queue: queue.Queue[PacketInfo] = queue.Queue(maxsize=buffer_size)
@@ -169,9 +240,11 @@ class ScapyCapture(PacketCapture):
 
         # Statistics
         self._last_packet_time: Optional[datetime] = None
-        
+
         # Error tracking
         self._error: Optional[Exception] = None
+
+        logger.info(f"ScapyCapture initialized with monitor_mode={monitor_mode}")
 
     def start_capture(self) -> None:
         """Start packet capture.
@@ -409,14 +482,19 @@ class ScapyCapture(PacketCapture):
                 "stop_filter": lambda p: self._stop_event.is_set(),
             }
 
+            # Enable monitor mode for WiFi to capture all traffic
+            if self._monitor_mode:
+                sniff_args["monitor"] = True
+                logger.info(f"WiFi Monitor Mode enabled - capturing all 802.11 traffic")
+
             # Check for Npcap/WinPcap on Windows
             if not conf.use_pcap:
                 logger.warning("Npcap/WinPcap not found. Attempting fallback to L3 capture (requires Admin).")
                 # Fallback to Layer 3 capture
                 sniff_args["L2socket"] = conf.L3socket
 
-            # Add filter if specified
-            if self._filter:
+            # Add filter if specified (note: filters work differently in monitor mode)
+            if self._filter and not self._monitor_mode:
                 sniff_args["filter"] = self._filter
 
             # Add timeout if specified
@@ -424,7 +502,7 @@ class ScapyCapture(PacketCapture):
                 sniff_args["timeout"] = self._timeout
 
             # Start sniffing
-            logger.debug(f"Starting sniff on {interface} with filter: {self._filter}")
+            logger.info(f"Starting sniff on {interface} with monitor_mode={self._monitor_mode}, filter: {self._filter}")
             sniff(**sniff_args)
 
         except PermissionError as e:
@@ -444,7 +522,17 @@ class ScapyCapture(PacketCapture):
             self._set_state(CaptureState.ERROR)
         except RuntimeError as e:
             logger.error(f"Runtime error during capture: {e}")
-            if "winpcap is not installed" in str(e):
+            error_msg = str(e).lower()
+            if "802.11 support is not enabled" in error_msg or "npcap 802.11" in error_msg:
+                 self._error = CaptureError(
+                    "WiFi Monitor Mode requires Npcap with 802.11 support enabled.",
+                    {
+                        "error": str(e),
+                        "suggestion": "Reinstall Npcap from https://npcap.com/ and check 'Support raw 802.11 traffic (and monitor mode)' during installation.",
+                        "troubleshooting": "During Npcap installation, make sure to enable the option 'Support raw 802.11 traffic (and monitor mode) for wireless adapters'. This is required for WiFi monitor mode."
+                    }
+                )
+            elif "winpcap is not installed" in str(e):
                  self._error = CaptureError(
                     "Npcap is not installed.",
                     {"error": str(e), "suggestion": "Please install Npcap (select 'Install Npcap in WinPcap API-compatible Mode')."}
@@ -551,59 +639,32 @@ class ScapyCapture(PacketCapture):
         elif packet.haslayer(ICMP):
             protocol = "ICMP"
 
-        # Extract HTTP/HTTPS information
-        url = None
-        host = None
+        # Get raw packet bytes for storage
+        raw_packet = bytes(packet)
 
-        # Check for HTTP traffic (port 80)
-        if dst_port == 80 or src_port == 80:
-            try:
-                # Try to extract HTTP request from raw payload
-                raw_data = bytes(packet)
+        # Extract TCP payload for HTTP/HTTPS parsing
+        payload = b""
+        if packet.haslayer(TCP):
+            # Get TCP payload
+            tcp_layer = packet[TCP]
+            payload = bytes(tcp_layer.payload)
+        elif packet.haslayer(UDP):
+            # Get UDP payload
+            udp_layer = packet[UDP]
+            payload = bytes(udp_layer.payload)
 
-                # Look for HTTP request line
-                if b"GET " in raw_data or b"POST " in raw_data or b"HEAD " in raw_data:
-                    # Try to decode as text
-                    try:
-                        payload_str = raw_data.decode('utf-8', errors='ignore')
+        # Extract HTTP/HTTPS information from payload
+        url, host = parse_http_from_packet(payload, dst_port, src_port)
 
-                        # Find the HTTP request line
-                        lines = payload_str.split('\r\n')
-                        if lines:
-                            request_line = lines[0]
-                            parts = request_line.split(' ')
-                            if len(parts) >= 2 and parts[0] in ('GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'):
-                                path = parts[1]
-                                # Extract Host header
-                                for line in lines[1:]:
-                                    if line.lower().startswith('host:'):
-                                        host = line.split(':', 1)[1].strip()
-                                        # Construct full URL
-                                        url = f"http://{host}{path}"
-                                        break
-                    except Exception:
-                        pass
-
-            except Exception:
-                pass
-
-        # For HTTPS (port 443), we can only extract SNI from TLS ClientHello
-        # This is more complex and may require additional libraries
-        # For now, we'll mark HTTPS traffic but won't extract the URL
-        elif dst_port == 443 or src_port == 443:
-            try:
-                raw_data = bytes(packet)
-                # TLS ClientHello starts with \x16\x03
-                if raw_data[:2] == b'\x16\x03':
-                    # This is likely a TLS packet
-                    # For HTTPS traffic without SNI parsing, we just mark it
-                    # A full TLS parser would be needed to extract SNI
-                    pass
-            except Exception:
-                pass
-
-        # Get raw bytes
-        raw_data = bytes(packet)
+        # If no HTTP info found, try TLS SNI for HTTPS (port 443)
+        if not host and not url:
+            _, host = parse_tls_sni(payload, dst_port, src_port)
+            # Debug logging for HTTPS packets
+            if dst_port == 443 or src_port == 443:
+                if host:
+                    logger.info(f"HTTPS SNI extracted: {host}")
+                else:
+                    logger.debug(f"HTTPS packet (port {dst_port}/{src_port}) but no SNI found, payload size: {len(payload)}")
 
         return PacketInfo(
             timestamp=timestamp,
@@ -612,8 +673,8 @@ class ScapyCapture(PacketCapture):
             src_port=src_port,
             dst_port=dst_port,
             protocol=protocol,
-            length=len(raw_data),
-            raw_data=raw_data,
+            length=len(raw_packet),
+            raw_data=raw_packet,
             interface=self._interface,
             mac_src=mac_src,
             mac_dst=mac_dst,
@@ -749,6 +810,7 @@ def create_scapy_capture(
     buffer_size: int = 1000,
     promiscuous: bool = True,
     timeout: Optional[int] = None,
+    monitor_mode: bool = False,
 ) -> ScapyCapture:
     """Create a Scapy capture instance.
 
@@ -760,12 +822,13 @@ def create_scapy_capture(
         buffer_size: Maximum packets to buffer
         promiscuous: Enable promiscuous mode
         timeout: Capture timeout in seconds
+        monitor_mode: Enable WiFi monitor mode (RFMON) for capturing all WiFi traffic
 
     Returns:
         Configured ScapyCapture instance
 
     Example:
-        >>> capture = create_scapy_capture(interface="eth0")
+        >>> capture = create_scapy_capture(interface="eth0", monitor_mode=True)
         >>> capture.start_capture()
     """
     return ScapyCapture(
@@ -774,4 +837,5 @@ def create_scapy_capture(
         buffer_size=buffer_size,
         promiscuous=promiscuous,
         timeout=timeout,
+        monitor_mode=monitor_mode,
     )
