@@ -22,8 +22,15 @@ from src.detection import DetectionEngine
 from src.storage import DatabaseManager, AlertFilter, create_alert_repository
 
 # Import theme system
-from src.gui.theme.colors import Colors, StatusColors
+# Import iOS theme system
+from src.gui.theme.colors import Colors, ThemeMode, iOSSpacing
 from src.gui.theme.typography import Fonts
+from src.gui.components.ios_list import iOSList, iOSListItem
+from src.gui.components.ios_button import iOSButton
+from src.gui.components.ios_modal import iOSModal
+from src.gui.components.ios_switch import iOSSwitch
+from src.gui.components.ios_segment import iOSSegment
+from src.gui.components.ios_progress import iOSActivitySpinner, iOSProgressBar
 
 
 class AlertPanel:
@@ -83,7 +90,7 @@ class AlertPanel:
         Returns:
             Hex color string for the severity
         """
-        return StatusColors.get_severity_color(severity)
+        return Colors.get_severity_color(severity)
 
     def build(self) -> tk.Frame:
         """Build alert panel UI.
@@ -92,11 +99,11 @@ class AlertPanel:
             Alert panel frame widget
         """
         if CUSTOMTKINTER_AVAILABLE:
-            self._frame = ctk.CTkFrame(self._parent, fg_color="transparent")
+            self._frame = ctk.CTkFrame(self._parent, fg_color=Colors.get_card_color())
         else:
             self._frame = ttk.Frame(self._parent)
 
-        self._frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self._frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
         # Create sections
         self._create_header()
@@ -119,12 +126,12 @@ class AlertPanel:
             ).pack(side="left")
             return
 
-        # CustomTkinter header with neon styling
+        # CustomTkinter header with iOS styling
         title = ctk.CTkLabel(
             self._frame,
             text="⚠️ Security Alerts",
             font=("Fira Code", 20, "bold"),
-            text_color=Colors.NEON.neon_red,
+            text_color=Colors.THEME.system_red,
         )
         title.pack(pady=(0, 12))
 
@@ -194,7 +201,7 @@ class AlertPanel:
         title.pack(pady=(10, 5))
 
         # Filters row
-        filter_row = ctk.CTkFrame(self._filter_frame, fg_color="transparent")
+        filter_row = ctk.CTkFrame(self._filter_frame, fg_color=Colors.get_card_color())
         filter_row.pack(fill="x", padx=10, pady=5)
 
         # Severity
@@ -239,7 +246,7 @@ class AlertPanel:
         acknowledged_check.pack(side="left", padx=(10, 0))
 
         # Buttons
-        btn_frame = ctk.CTkFrame(self._filter_frame, fg_color="transparent")
+        btn_frame = ctk.CTkFrame(self._filter_frame, fg_color=Colors.get_card_color())
         btn_frame.pack(fill="x", padx=10, pady=(5, 10))
 
         ctk.CTkButton(
@@ -306,7 +313,7 @@ class AlertPanel:
             return
 
         # CustomTkinter alerts display
-        content = ctk.CTkFrame(self._frame, fg_color="transparent")
+        content = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
         content.pack(fill="both", expand=True)
 
         # Alerts list (left)
@@ -357,7 +364,7 @@ class AlertPanel:
         self._detail_text.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Action buttons
-        action_frame = ctk.CTkFrame(self._detail_frame, fg_color="transparent")
+        action_frame = ctk.CTkFrame(self._detail_frame, fg_color=Colors.get_card_color())
         action_frame.pack(fill="x", padx=10, pady=(0, 10))
 
         self._acknowledge_btn = ctk.CTkButton(
@@ -655,10 +662,8 @@ Notes:
         Args:
             message: Error message
         """
-        if CUSTOMTKINTER_AVAILABLE:
-            ctk.CTkMessageBox(title="Error", message=message)
-        else:
-            messagebox.showerror("Error", message)
+        # Always use standard messagebox - CTkMessageBox doesn't exist
+        messagebox.showerror("Error", message)
 
     def _show_info(self, message: str) -> None:
         """Show info message.
@@ -666,10 +671,8 @@ Notes:
         Args:
             message: Info message
         """
-        if CUSTOMTKINTER_AVAILABLE:
-            ctk.CTkMessageBox(title="Information", message=message)
-        else:
-            messagebox.showinfo("Information", message)
+        # Always use standard messagebox - CTkMessageBox doesn't exist
+        messagebox.showinfo("Information", message)
 
     def _show_input_dialog(self, title: str, prompt: str) -> str:
         """Show input dialog.

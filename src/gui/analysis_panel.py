@@ -23,8 +23,13 @@ from src.analysis import AnalysisEngine
 from src.storage import DatabaseManager, PacketFilter, AlertFilter, create_packet_repository, create_alert_repository
 
 # Import theme system
-from src.gui.theme.colors import Colors, NeonColors
+# Import iOS theme system
+from src.gui.theme.colors import Colors, ThemeMode, iOSSpacing
 from src.gui.theme.typography import Fonts
+from src.gui.components.ios_button import iOSButton
+from src.gui.components.ios_list import iOSList, iOSListItem
+from src.gui.components.ios_segment import iOSSegment
+from src.gui.components.ios_progress import iOSActivitySpinner, iOSProgressBar
 
 
 class AnalysisPanel:
@@ -83,11 +88,11 @@ class AnalysisPanel:
             Analysis panel frame widget
         """
         if CUSTOMTKINTER_AVAILABLE:
-            self._frame = ctk.CTkFrame(self._parent, fg_color="transparent")
+            self._frame = ctk.CTkFrame(self._parent, fg_color=Colors.get_card_color())
         else:
             self._frame = ttk.Frame(self._parent)
 
-        self._frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self._frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
         # Create sections
         self._create_header()
@@ -114,12 +119,12 @@ class AnalysisPanel:
             ).pack(side="left")
             return
 
-        # CustomTkinter header with neon styling
+        # CustomTkinter header with iOS styling
         title = ctk.CTkLabel(
             self._frame,
             text="📈 Traffic Analysis",
             font=("Fira Code", 20, "bold"),
-            text_color=Colors.NEON.neon_cyan,
+            text_color=Colors.THEME.info,
         )
         title.pack(pady=(0, 12))
 
@@ -176,14 +181,14 @@ class AnalysisPanel:
         self._top10_frame.pack(fill="x", pady=(0, 10))
 
         # Header with title and refresh button
-        header_frame = ctk.CTkFrame(self._top10_frame, fg_color="transparent")
+        header_frame = ctk.CTkFrame(self._top10_frame, fg_color=Colors.get_card_color())
         header_frame.pack(fill="x", padx=10, pady=(10, 5))
 
         title = ctk.CTkLabel(
             header_frame,
             text="🏆 Top 10 Traffic Destinations",
             font=ctk_CTkFont(family="Fira Code", size=14, weight="bold"),
-            text_color=Colors.NEON.neon_cyan,
+            text_color=Colors.THEME.info,
         )
         title.pack(side="left")
 
@@ -236,8 +241,8 @@ class AnalysisPanel:
             borderwidth=0,
             rowheight=28,
         )
-        style.configure("Treeview.Heading", background=Colors.THEME.bg_hover, foreground=Colors.NEON.neon_cyan)
-        style.map("Treeview", background=[("selected", Colors.NEON.neon_green_dim)])
+        style.configure("Treeview.Heading", background=Colors.THEME.bg_hover, foreground=Colors.THEME.info)
+        style.map("Treeview", background=[("selected", Colors.THEME.success_bg)])
 
         # Scrollbar
         scrollbar = ttk.Scrollbar(
@@ -314,7 +319,7 @@ class AnalysisPanel:
         title.pack(pady=(10, 5))
 
         # Time range
-        time_frame = ctk.CTkFrame(self._filter_frame, fg_color="transparent")
+        time_frame = ctk.CTkFrame(self._filter_frame, fg_color=Colors.get_card_color())
         time_frame.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
@@ -326,7 +331,7 @@ class AnalysisPanel:
         self._start_time_var = ctk.StringVar(value="")
         start_entry = ctk.CTkEntry(
             time_frame,
-            variable=self._start_time_var,
+            textvariable=self._start_time_var,
             placeholder_text="Start (YYYY-MM-DD HH:MM:SS)",
             width=200,
         )
@@ -335,14 +340,14 @@ class AnalysisPanel:
         self._end_time_var = ctk.StringVar(value="")
         end_entry = ctk.CTkEntry(
             time_frame,
-            variable=self._end_time_var,
+            textvariable=self._end_time_var,
             placeholder_text="End (YYYY-MM-DD HH:MM:SS)",
             width=200,
         )
         end_entry.pack(side="left", padx=2)
 
         # Quick time buttons
-        quick_frame = ctk.CTkFrame(self._filter_frame, fg_color="transparent")
+        quick_frame = ctk.CTkFrame(self._filter_frame, fg_color=Colors.get_card_color())
         quick_frame.pack(fill="x", padx=10, pady=2)
 
         ctk.CTkButton(
@@ -367,7 +372,7 @@ class AnalysisPanel:
         ).pack(side="left", padx=2)
 
         # IP addresses
-        ip_frame = ctk.CTkFrame(self._filter_frame, fg_color="transparent")
+        ip_frame = ctk.CTkFrame(self._filter_frame, fg_color=Colors.get_card_color())
         ip_frame.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
@@ -379,7 +384,7 @@ class AnalysisPanel:
         self._src_ip_var = ctk.StringVar()
         src_entry = ctk.CTkEntry(
             ip_frame,
-            variable=self._src_ip_var,
+            textvariable=self._src_ip_var,
             placeholder_text="e.g., 192.168.1.1",
         )
         src_entry.pack(side="left", fill="x", expand=True, padx=2)
@@ -393,13 +398,13 @@ class AnalysisPanel:
         self._dst_ip_var = ctk.StringVar()
         dst_entry = ctk.CTkEntry(
             ip_frame,
-            variable=self._dst_ip_var,
+            textvariable=self._dst_ip_var,
             placeholder_text="e.g., 192.168.1.2",
         )
         dst_entry.pack(side="left", fill="x", expand=True, padx=2)
 
         # Protocol and limit
-        filter2_frame = ctk.CTkFrame(self._filter_frame, fg_color="transparent")
+        filter2_frame = ctk.CTkFrame(self._filter_frame, fg_color=Colors.get_card_color())
         filter2_frame.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
@@ -411,8 +416,8 @@ class AnalysisPanel:
         self._protocol_var = ctk.StringVar()
         ctk.CTkEntry(
             filter2_frame,
-            variable=self._protocol_var,
-            placeholder_value="TCP, UDP, ICMP, etc.",
+            textvariable=self._protocol_var,
+            placeholder_text="TCP, UDP, ICMP, etc.",
             width=150,
         ).pack(side="left", padx=2)
 
@@ -425,12 +430,12 @@ class AnalysisPanel:
         self._limit_var = ctk.StringVar(value="100")
         ctk.CTkEntry(
             filter2_frame,
-            variable=self._limit_var,
+            textvariable=self._limit_var,
             width=80,
         ).pack(side="left", padx=2)
 
         # Buttons
-        btn_frame = ctk.CTkFrame(self._filter_frame, fg_color="transparent")
+        btn_frame = ctk.CTkFrame(self._filter_frame, fg_color=Colors.get_card_color())
         btn_frame.pack(fill="x", padx=10, pady=(5, 10))
 
         ctk.CTkButton(
@@ -764,10 +769,8 @@ class AnalysisPanel:
         Args:
             message: Error message
         """
-        if CUSTOMTKINTER_AVAILABLE:
-            ctk.CTkMessageBox(title="Error", message=message)
-        else:
-            messagebox.showerror("Error", message)
+        # Always use standard messagebox - CTkMessageBox doesn't exist
+        messagebox.showerror("Error", message)
 
     def _show_info(self, message: str) -> None:
         """Show info message.
@@ -775,10 +778,8 @@ class AnalysisPanel:
         Args:
             message: Info message
         """
-        if CUSTOMTKINTER_AVAILABLE:
-            ctk.CTkMessageBox(title="Information", message=message)
-        else:
-            messagebox.showinfo("Information", message)
+        # Always use standard messagebox - CTkMessageBox doesn't exist
+        messagebox.showinfo("Information", message)
 
     def destroy(self) -> None:
         """Clean up analysis panel resources."""

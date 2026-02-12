@@ -20,7 +20,8 @@ except ImportError:
 import tkinter as tk
 from tkinter import ttk
 
-from src.gui.theme.colors import Colors, NeonColors
+# Import iOS theme system
+from src.gui.theme.colors import Colors, ThemeMode, iOSSpacing
 from src.gui.theme.typography import Fonts
 
 
@@ -39,35 +40,35 @@ class NeonButton(ctk.CTkButton):
         btn.pack()
     """
 
-    # Color presets for different button types
+    # Color presets for different button types (using iOS Colors)
     COLOR_PRESETS: Dict[str, Dict[str, Any]] = {
         "green": {
-            "fg": (NeonColors.neon_green, "#00CC33"),
-            "hover": (NeonColors.neon_green_dim, NeonColors.neon_green_dim),
+            "fg": (Colors.THEME.system_green, "#00CC33"),
+            "hover": (Colors.THEME.success_bg, Colors.THEME.success_bg),
             "text": (Colors.THEME.bg_primary, Colors.THEME.bg_primary),
-            "glow": NeonColors.neon_green_glow,
+            "glow": None,
         },
         "red": {
-            "fg": (NeonColors.neon_red, "#CC2929"),
-            "hover": (NeonColors.neon_red_dim, NeonColors.neon_red_dim),
+            "fg": (Colors.THEME.system_red, "#CC2929"),
+            "hover": (Colors.THEME.error_bg, Colors.THEME.error_bg),
             "text": (Colors.THEME.bg_primary, Colors.THEME.bg_primary),
-            "glow": NeonColors.neon_red_glow,
+            "glow": None,
         },
         "cyan": {
-            "fg": (NeonColors.neon_cyan, "#00AECC"),
-            "hover": (NeonColors.neon_cyan_dim, NeonColors.neon_cyan_dim),
+            "fg": (Colors.THEME.info, "#00AECC"),
+            "hover": (Colors.THEME.info_bg, Colors.THEME.info_bg),
             "text": (Colors.THEME.bg_primary, Colors.THEME.bg_primary),
             "glow": "0 0 12px rgba(0,217,255,0.5), 0 0 24px rgba(0,217,255,0.2)",
         },
         "yellow": {
-            "fg": (NeonColors.neon_yellow, "#CCAC00"),
-            "hover": (NeonColors.neon_yellow_dim, NeonColors.neon_yellow_dim),
+            "fg": (Colors.THEME.warning, "#CCAC00"),
+            "hover": (Colors.THEME.warning_bg, Colors.THEME.warning_bg),
             "text": (Colors.THEME.bg_primary, Colors.THEME.bg_primary),
             "glow": "0 0 12px rgba(255,215,0,0.5), 0 0 24px rgba(255,215,0,0.2)",
         },
         "orange": {
-            "fg": (NeonColors.neon_orange, "#B37700"),
-            "hover": (NeonColors.neon_orange_dim, NeonColors.neon_orange_dim),
+            "fg": (Colors.THEME.system_orange, "#B37700"),
+            "hover": (Colors.THEME.high_bg, Colors.THEME.high_bg),
             "text": (Colors.THEME.bg_primary, Colors.THEME.bg_primary),
             "glow": "0 0 12px rgba(255,140,0,0.5), 0 0 24px rgba(255,140,0,0.2)",
         },
@@ -78,9 +79,9 @@ class NeonButton(ctk.CTkButton):
             "glow": None,
         },
         "ghost": {
-            "fg": ("transparent", "transparent"),
-            "hover": (NeonColors.neon_green_dim, NeonColors.neon_green_dim),
-            "text": (NeonColors.neon_green, NeonColors.neon_green),
+            "fg": (Colors.THEME.bg_secondary, Colors.THEME.bg_card),
+            "hover": (Colors.THEME.success_bg, Colors.THEME.success_bg),
+            "text": (Colors.THEME.system_green, Colors.THEME.system_green),
             "glow": None,
         },
     }

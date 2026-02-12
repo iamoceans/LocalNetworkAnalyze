@@ -1,7 +1,8 @@
 """
 Main application window.
 
-Provides the primary GUI framework for the network analyzer.
+Provides the primary GUI framework for the network analyzer
+with iOS-style design and bottom TabBar navigation.
 """
 
 import tkinter as tk
@@ -10,13 +11,13 @@ import os
 from typing import Optional, Callable, Dict, Any
 from datetime import datetime
 import threading
+import time
 
 try:
     import customtkinter as ctk
     CUSTOMTKINTER_AVAILABLE = True
 except ImportError:
     CUSTOMTKINTER_AVAILABLE = False
-    # Fall back to standard tkinter
     import tkinter as ctk
 
 from src.core.logger import get_logger
@@ -26,23 +27,41 @@ from src.capture import PacketCapture, create_capture as create_packet_capture
 from src.analysis import AnalysisEngine, create_analysis_engine
 from src.detection import DetectionEngine, create_detection_engine
 from src.storage import DatabaseManager, get_database_manager
+
+# Import iOS theme system
+from src.gui.theme.colors import Colors, ThemeMode, iOSSpacing, iOSShapes
+from src.gui.theme.typography import Fonts
+
+# Import panels
 from src.gui.dashboard import create_dashboard
 from src.gui.capture_panel import create_capture_panel
 from src.gui.scan_panel import create_scan_panel
 from src.gui.analysis_panel import create_analysis_panel
 from src.gui.alert_panel import create_alert_panel
 
-# Import new theme system
-from src.gui.theme.colors import Colors, NeonColors
-from src.gui.theme.typography import Fonts, Typography
-from src.gui.components import GlassFrame, NeonButton
+# Import iOS components
+from src.gui.components.tab_bar import iOSTabBar
+from src.gui.components.ios_button import iOSButton
 
 
 class MainWindow:
-    """Main application window.
+    """Main application window with iOS-style design.
 
-    Coordinates all GUI components and manages the application lifecycle.
+    Features:
+    - Left sidebar TabBar navigation
+    - iOS color scheme
+    - Clean, modern interface
+    - 80pt sidebar width
     """
+
+    # Tab definitions
+    TABS = [
+        {"key": "dashboard", "icon": "📊", "label": "Dashboard", "panel": "dashboard"},
+        {"key": "capture", "icon": "📡", "label": "Capture", "panel": "capture"},
+        {"key": "scan", "icon": "🔍", "label": "Scan", "panel": "scan"},
+        {"key": "analysis", "icon": "📈", "label": "Analysis", "panel": "analysis"},
+        {"key": "alerts", "icon": "⚠️", "label": "Alerts", "panel": "alerts"},
+    ]
 
     def __init__(
         self,
@@ -59,7 +78,7 @@ class MainWindow:
         self._lang = lang_manager
         self._logger = get_logger(__name__)
 
-        # Initialize engines (will be created later)
+        # Initialize engines
         self._capture: Optional[PacketCapture] = None
         self._analysis: Optional[AnalysisEngine] = None
         self._detection: Optional[DetectionEngine] = None
@@ -68,18 +87,30 @@ class MainWindow:
         # Create main window
         self._root = self._create_window()
 
-        # UI components (will be created in subclasses)
-        self._current_frame: Optional[tk.Frame] = None
-        self._navigation_frame: Optional[tk.Frame] = None
+        # UI components
+        self._header_frame: Optional[tk.Frame] = None
         self._content_frame: Optional[tk.Frame] = None
+        self._tab_bar: Optional[iOSTabBar] = None
+        self._current_frame: Optional[tk.Frame] = None
 
         # Status bar
         self._status_var: Optional[ctk.StringVar] = None
         self._packet_count_var: Optional[ctk.StringVar] = None
         self._alert_count_var: Optional[ctk.StringVar] = None
+        self._alert_label: Optional[Any] = None
 
-        # Current panel (for cleanup)
+        # Current panel
         self._current_panel = None
+        self._current_tab = "dashboard"
+
+        # Tab callbacks
+        self._tab_callbacks = {
+            "dashboard": lambda: self._show_dashboard(),
+            "capture": lambda: self._show_capture(),
+            "scan": lambda: self._show_scan(),
+            "analysis": lambda: self._show_analysis(),
+            "alerts": lambda: self._show_alerts(),
+        }
 
         # Application state
         self._is_capturing = False
@@ -88,7 +119,7 @@ class MainWindow:
         self._logger.info("Main window initialized")
 
     def _create_window(self) -> tk.Tk:
-        """Create main window with cyber-security dark theme.
+        """Create main window with iOS dark theme.
 
         Returns:
             Main window instance
@@ -98,10 +129,8 @@ class MainWindow:
             root.title("Local Network Analyzer")
             root.geometry(f"{self._config.window_width}x{self._config.window_height}")
 
-            # Apply cyber-security dark theme
+            # Apply iOS dark theme
             ctk.set_appearance_mode("Dark")
-
-            # Use dark theme as base
             ctk.set_default_color_theme("dark-blue")
 
             # Configure window background
@@ -118,496 +147,270 @@ class MainWindow:
             # Configure basic styling
             style = ttk.Style()
             style.theme_use("clam")
-
-            # Apply dark colors
             style.configure(".", background=Colors.THEME.bg_primary)
-            style.configure("TFrame", background=Colors.THEME.bg_primary)
-            style.configure("TLabelframe", background=Colors.THEME.bg_card, bordercolor=Colors.THEME.border_default)
-            style.configure("TLabelframe.Label", background=Colors.THEME.bg_card, foreground=Colors.THEME.text_primary)
-            style.configure("TButton", background=Colors.THEME.bg_hover, foreground=Colors.THEME.text_primary, borderwidth=0)
+            style.configure("TFrame", background=Colors.THEME.bg_card)
+            style.configure("TButton", background=Colors.THEME.bg_hover, foreground=Colors.THEME.text_primary)
             style.configure("TLabel", background=Colors.THEME.bg_primary, foreground=Colors.THEME.text_primary)
-            style.map("TButton", background=[("active", Colors.NEON.neon_green_dim)])
 
             return root
 
     def setup_ui(self) -> None:
-        """Setup user interface components.
+        """Setup user interface with iOS-style layout.
 
-        This method should be called after initialization
-        to build all UI components.
+        Creates:
+        - Left sidebar TabBar (80pt width)
+        - Main content area
+        - Status bar (at bottom)
         """
-        # Create main layout
-        self._create_main_layout()
+        # Create main iOS layout (includes grid configuration)
+        self._create_ios_layout()
 
         # Create status bar
         self._create_status_bar()
 
-        # Create initial content frame
-        self._show_default_content()
+        # Show initial panel
+        self._show_dashboard()
 
-        self._logger.info("UI setup completed")
+        self._logger.info("iOS-style UI setup completed")
 
-    def _create_main_layout(self) -> None:
-        """Create main window layout with glassmorphism sidebar.
+    def _create_ios_layout(self) -> None:
+        """Create iOS-style layout with left sidebar, content, and status bar.
 
-        Creates navigation frame on the left and content frame on the right.
+        Layout structure:
+        ┌─────────────────────────────────────────────┐
+        │ ┌──────┐  Content Area                   │
+        │ │      │  (Current Panel)                 │
+        │ │ Tab │                                  │
+        │ │ Bar │                                  │
+        │ │      │                                  │
+        │ └──────┘                                  │
+        │ ┌──────────────────────────────────────┐   │
+        │ │ Status Bar                          │   │
+        │ └──────────────────────────────────────┘   │
+        └─────────────────────────────────────────────┘
         """
-        if CUSTOMTKINTER_AVAILABLE:
-            # Grid layout for main window
-            self._root.grid_rowconfigure(0, weight=1)
-            self._root.grid_columnconfigure(1, weight=1)
+        # Configure root grid for left sidebar layout
+        self._root.grid_rowconfigure(0, weight=1)
+        self._root.grid_columnconfigure(0, weight=0)  # Sidebar fixed width
+        self._root.grid_columnconfigure(1, weight=1)  # Content expands
 
-            # Navigation frame (sidebar) with glass effect
-            self._navigation_frame = ctk.CTkFrame(
-                self._root,
-                width=240,
-                corner_radius=16,
-                fg_color=Colors.THEME.bg_card,
-                border_width=1,
-                border_color=Colors.THEME.border_default,
-            )
-            self._navigation_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
-            self._navigation_frame.grid_rowconfigure(5, weight=1)
+        # Tab bar frame (left sidebar)
+        self._tab_bar = iOSTabBar(self._root)
+        self._tab_bar.grid(row=0, column=0, sticky="ns", padx=0, pady=0)
 
-            # Content frame (main area) - transparent
-            self._content_frame = ctk.CTkFrame(
-                self._root,
-                corner_radius=16,
-                fg_color="transparent"
-            )
-            self._content_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 20), pady=20)
-            self._content_frame.grid_rowconfigure(0, weight=1)
-            self._content_frame.grid_columnconfigure(0, weight=1)
+        # Content frame (main area for panels)
+        self._content_frame = ctk.CTkFrame(self._root, corner_radius=0, fg_color=Colors.get_card_color())
+        self._content_frame.grid(row=0, column=1, sticky="nsew", padx=0, pady=0)
+        self._content_frame.grid_rowconfigure(0, weight=1)  # Content panel expands
+        self._content_frame.grid_rowconfigure(1, weight=0)  # Status bar fixed height
+        self._content_frame.grid_columnconfigure(0, weight=1)
 
-            # Create navigation buttons
-            self._create_navigation()
+        # Status bar frame container (at the bottom of content area)
+        self._status_frame = ctk.CTkFrame(self._content_frame, fg_color=Colors.get_card_color())
+        self._status_frame.grid(row=1, column=0, sticky="ew")
 
-        else:
-            # Standard tkinter layout
-            self._navigation_frame = ttk.Frame(self._root, width=200, relief="ridge", borderwidth=1)
-            self._navigation_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+    def _create_header(self) -> None:
+        """Create iOS-style header bar.
 
-            self._content_frame = ttk.Frame(self._root)
-            self._content_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-            # Create navigation buttons
-            self._create_navigation()
-
-    def _create_navigation(self) -> None:
-        """Create navigation buttons in sidebar."""
+        Could contain:
+        - Large title (for current view)
+        - Back button
+        - Action buttons
+        """
         # Get translations or use defaults
         def t(key: str, default: str) -> str:
             if self._lang:
                 return self._lang.t(key)
             return default
 
-        if not CUSTOMTKINTER_AVAILABLE:
-            # Standard tkinter navigation
-            nav_items = [
-                ("navigation.dashboard", "Dashboard", lambda: self._show_dashboard()),
-                ("navigation.capture", "Capture", lambda: self._show_capture()),
-                ("navigation.scan", "Scan", lambda: self._show_scan()),
-                ("navigation.analysis", "Analysis", lambda: self._show_analysis()),
-                ("navigation.alerts", "Alerts", lambda: self._show_alerts()),
-            ]
+        # Title based on current tab
+        tab_info = next((tab for tab in self.TABS if tab["key"] == self._current_tab), None)
+        if tab_info:
+            title = t(f"navigation.{tab_info['key']}", tab_info["label"])
+        else:
+            title = t("app.name", "Network Analyzer")
 
-            for key, default, callback in nav_items:
-                label = t(key, default)
-                btn = ttk.Button(
-                    self._navigation_frame,
-                    text=label,
-                    command=callback,
-                )
-                btn.pack(fill=tk.X, padx=5, pady=5)
+        # Create header content
+        # Left: optional back button (not shown on root dashboard)
+        # Center: title
+        # Right: optional actions (theme toggle, etc.)
 
-            # Language selector
-            self._add_language_selector_tk()
-
-            # Add quit button
-            quit_label = t("navigation.exit", "Exit")
-            quit_btn = ttk.Button(
-                self._navigation_frame,
-                text=quit_label,
-                command=self.quit,
-            )
-            quit_btn.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
-
-            return
-
-        # CustomTkinter navigation with neon styling
-        nav_buttons = [
-            {
-                "key": "navigation.dashboard",
-                "default": "Dashboard",
-                "icon": "📊",
-                "command": self._show_dashboard,
-            },
-            {
-                "key": "navigation.capture",
-                "default": "Capture",
-                "icon": "📡",
-                "command": self._show_capture,
-            },
-            {
-                "key": "navigation.scan",
-                "default": "Scan",
-                "icon": "🔍",
-                "command": self._show_scan,
-            },
-            {
-                "key": "navigation.analysis",
-                "default": "Analysis",
-                "icon": "📈",
-                "command": self._show_analysis,
-            },
-            {
-                "key": "navigation.alerts",
-                "default": "Alerts",
-                "icon": "⚠️",
-                "command": self._show_alerts,
-            },
-        ]
-
-        # Add title/logo to sidebar
         title_label = ctk.CTkLabel(
-            self._navigation_frame,
-            text="🔍 Network",
-            font=("Fira Code", 18, "bold"),
-            text_color=Colors.NEON.neon_green,
-        )
-        title_label.pack(pady=(15, 10))
-
-        # Navigation buttons with ghost/neon style
-        for btn_config in nav_buttons:
-            text = t(btn_config["key"], btn_config["default"])
-            btn = ctk.CTkButton(
-                self._navigation_frame,
-                text=f"{text}  {btn_config['icon']}",
-                font=("Fira Code", 13),
-                height=42,
-                fg_color="transparent",
-                text_color=Colors.THEME.text_secondary,
-                hover_color=Colors.NEON.neon_green_dim,
-                anchor="w",
-                corner_radius=8,
-                command=btn_config["command"],
-                border_width=0,
-            )
-            btn.pack(fill=tk.X, padx=12, pady=4)
-
-        # Add language selector
-        self._add_language_selector_ctk()
-
-        # Add spacer before exit button
-        ctk.CTkLabel(self._navigation_frame, text="").pack(pady=15)
-
-        # Exit button with red accent
-        exit_label = t("navigation.exit", "Exit")
-        exit_btn = ctk.CTkButton(
-            self._navigation_frame,
-            text=f"{exit_label}  🚪",
-            font=("Fira Code", 13),
-            height=42,
-            fg_color="transparent",
-            text_color=Colors.NEON.neon_red,
-            hover_color=Colors.NEON.neon_red_dim,
+            self._header_frame,
+            text=title,
+            font=Fonts.TITLE2,
+            text_color=Colors.THEME.text_primary if ThemeMode.is_dark() else Colors.THEME.light_text_primary,
             anchor="w",
-            corner_radius=8,
-            command=self.quit,
-            border_width=0,
         )
-        exit_btn.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(0, 15))
+        title_label.pack(side="left", padx=iOSSpacing.lg, expand=True, fill="x")
+
+        # Optional: Add theme toggle button
+        theme_btn = iOSButton(
+            self._header_frame,
+            text="◐",
+            size="small",
+            style="plain",
+            command=self._toggle_theme,
+        )
+        theme_btn.pack(side="right", padx=iOSSpacing.md)
 
     def _create_status_bar(self) -> None:
-        """Create status bar at bottom with neon indicators."""
+        """Create iOS-style status bar at bottom of content area."""
         if CUSTOMTKINTER_AVAILABLE:
-            # Status bar frame with glass effect
+            # Status bar frame
             status_frame = ctk.CTkFrame(
-                self._root,
+                self._status_frame,
                 height=32,
-                fg_color=Colors.THEME.bg_card,
-                corner_radius=8,
+                corner_radius=iOSShapes.corner_small,
+                fg_color=Colors.THEME.bg_secondary if ThemeMode.is_dark() else Colors.THEME.light_bg_secondary,
+                border_width=1,
+                border_color=Colors.THEME.separator,
             )
-            status_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 15))
+            status_frame.pack(fill="x", padx=iOSSpacing.lg, pady=(iOSSpacing.md, iOSSpacing.sm))
 
             # Status variables
             self._status_var = ctk.StringVar(value="Ready")
             self._packet_count_var = ctk.StringVar(value="Packets: 0")
             self._alert_count_var = ctk.StringVar(value="Alerts: 0")
 
-            # Status label with Fira Code font
+            # Status label
             status_label = ctk.CTkLabel(
                 status_frame,
                 textvariable=self._status_var,
+                font=Fonts.CAPTION1,
+                text_color=Colors.THEME.text_secondary if ThemeMode.is_dark() else Colors.THEME.light_text_secondary,
                 anchor="w",
-                font=("Fira Code", 11),
-                text_color=Colors.THEME.text_secondary,
             )
-            status_label.pack(side=tk.LEFT, padx=12)
+            status_label.pack(side="left", padx=iOSSpacing.md)
 
-            # Packet count with neon green accent
+            # Packet count
             packet_label = ctk.CTkLabel(
                 status_frame,
                 textvariable=self._packet_count_var,
-                font=("Fira Code", 11),
-                text_color=Colors.NEON.neon_green,
+                font=Fonts.CAPTION1,
+                text_color=Colors.THEME.system_green,
+                anchor="e",
             )
-            packet_label.pack(side=tk.RIGHT, padx=12)
+            packet_label.pack(side="right", padx=iOSSpacing.md)
+
+            # Alert count
+            self._alert_label = ctk.CTkLabel(
+                status_frame,
+                textvariable=self._alert_count_var,
+                font=Fonts.CAPTION1,
+                text_color=Colors.THEME.text_secondary if ThemeMode.is_dark() else Colors.THEME.light_text_secondary,
+                anchor="e",
+            )
+            self._alert_label.pack(side="right", padx=(iOSSpacing.xs, iOSSpacing.md))
 
             # Separator
             separator = ctk.CTkLabel(
                 status_frame,
                 text="|",
-                font=("Fira Code", 11),
-                text_color=Colors.THEME.border_default,
+                font=Fonts.CAPTION1,
+                text_color=Colors.THEME.separator,
             )
-            separator.pack(side=tk.RIGHT, padx=(0, 12))
-
-            # Alert count with neon red accent (if alerts > 0)
-            self._alert_label = ctk.CTkLabel(
-                status_frame,
-                textvariable=self._alert_count_var,
-                font=("Fira Code", 11),
-                text_color=Colors.THEME.text_secondary,
-            )
-            self._alert_label.pack(side=tk.RIGHT, padx=(0, 12))
+            separator.pack(side="right", padx=iOSSpacing.xs)
 
         else:
             # Standard tkinter status bar
-            status_frame = ttk.Frame(self._root)
-            status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+            status_frame = ttk.Frame(self._status_frame)
+            status_frame.pack(side="bottom", fill="x")
 
             self._status_var = tk.StringVar(value="Ready")
             self._packet_count_var = tk.StringVar(value="Packets: 0")
             self._alert_count_var = tk.StringVar(value="Alerts: 0")
 
-            ttk.Label(
-                status_frame,
-                textvariable=self._status_var,
-            ).pack(side=tk.LEFT, padx=10)
+            ttk.Label(status_frame, textvariable=self._status_var).pack(side="left", padx=10)
+            ttk.Label(status_frame, textvariable=self._packet_count_var).pack(side="right", padx=10)
+            ttk.Label(status_frame, textvariable=self._alert_count_var).pack(side="right", padx=10)
 
-            ttk.Label(
-                status_frame,
-                textvariable=self._packet_count_var,
-            ).pack(side=tk.RIGHT, padx=10)
+    def _setup_tab_bar(self) -> None:
+        """Setup the left sidebar TabBar with all tabs."""
+        # Add all tabs to the tab bar
+        for tab in self.TABS:
+            self._tab_bar.add_tab(
+                name=tab["key"],
+                icon=tab["icon"],
+                label=tab["label"],
+                callback=self._tab_callbacks[tab["key"]],
+            )
 
-            ttk.Label(
-                status_frame,
-                textvariable=self._alert_count_var,
-            ).pack(side=tk.RIGHT, padx=10)
+        # Set initial active tab
+        self._tab_bar.set_active_tab(self._current_tab)
 
-    def _add_language_selector_tk(self) -> None:
-        """Add language selector for standard tkinter."""
-        if not self._lang:
-            return
-
-        def t(key: str, default: str) -> str:
-            return self._lang.t(key, default=default)
-
-        # Language label
-        lang_label = ttk.Label(
-            self._navigation_frame,
-            text=t("navigation.language", "Language") + ":",
-        )
-        lang_label.pack(pady=(20, 5))
-
-        # Language variable
-        current_lang = self._lang.get_language()
-        lang_var = tk.StringVar(value=current_lang)
-
-        def on_language_change(*args):
-            new_lang = lang_var.get()
-            if new_lang != current_lang:
-                self._switch_language(new_lang)
-
-        lang_var.trace("w", on_language_change)
-
-        # Language dropdown
-        lang_combo = ttk.Combobox(
-            self._navigation_frame,
-            textvariable=lang_var,
-            values=["en", "zh"],
-            state="readonly",
-            width=18,
-        )
-        lang_combo.pack(padx=5, pady=5)
-
-    def _add_language_selector_ctk(self) -> None:
-        """Add language selector for CustomTkinter."""
-        if not self._lang:
-            return
-
-        def t(key: str, default: str) -> str:
-            return self._lang.t(key, default=default)
-
-        # Language label
-        lang_label = ctk.CTkLabel(
-            self._navigation_frame,
-            text=t("navigation.language", "Language"),
-            font=ctk.CTkFont(size=12),
-        )
-        lang_label.pack(pady=(10, 5))
-
-        # Language variable
-        current_lang = self._lang.get_language()
-
-        def on_language_select(choice):
-            if choice != current_lang:
-                # Extract language code from choice
-                lang_code = "en" if "English" in choice else "zh"
-                self._switch_language(lang_code)
-
-        # Language options
-        lang_options = [
-            self._lang.get_language_name("en"),
-            self._lang.get_language_name("zh"),
-        ]
-
-        # Get display name for current language
-        current_display = self._lang.get_language_name(current_lang)
-
-        lang_combo = ctk.CTkOptionMenu(
-            self._navigation_frame,
-            values=lang_options,
-            command=on_language_select,
-        )
-        lang_combo.set(current_display)
-        lang_combo.pack(padx=10, pady=5)
-
-    def _switch_language(self, lang: str) -> None:
-        """Switch application language.
+    def _show_panel_by_key(self, panel_key: str) -> None:
+        """Show a panel by its tab key.
 
         Args:
-            lang: New language code ("en" or "zh")
+            panel_key: The tab key (dashboard, capture, scan, analysis, alerts)
         """
-        if not self._lang:
+        # Update tab bar active state
+        self._current_tab = panel_key
+        self._tab_bar.set_active_tab(panel_key)
+
+        # Clear content frame
+        self._clear_content_frame()
+
+        # Get tab info
+        tab_info = next((tab for tab in self.TABS if tab["key"] == panel_key), None)
+        if not tab_info:
+            self._logger.warning(f"Unknown panel key: {panel_key}")
             return
 
-        def t(key: str, default: str) -> str:
-            return self._lang.t(key, default=default)
+        # Create and show panel
+        if panel_key == "dashboard":
+            self._show_dashboard()
+        elif panel_key == "capture":
+            self._show_capture()
+        elif panel_key == "scan":
+            self._show_scan()
+        elif panel_key == "analysis":
+            self._show_analysis()
+        elif panel_key == "alerts":
+            self._show_alerts()
 
-        # Get display name for confirmation
-        lang_name = self._lang.get_language_name(lang)
+        # Update status
+        self._update_status(f"{tab_info['label']} loaded")
 
-        # Simple confirmation using message box
-        import tkinter.messagebox as messagebox
-        confirm = messagebox.askyesno(
-            t("language.switch_confirm", "Switch Language?").replace("{lang}", lang_name),
-            t("language.switch_confirm", "Switch to {lang}?").replace("{lang}", lang_name),
-        )
-
-        if confirm:
+    def _clear_content_frame(self) -> None:
+        """Clear panel widgets from content frame (preserves status bar)."""
+        # Clean up current panel
+        if self._current_panel and hasattr(self._current_panel, 'destroy'):
             try:
-                self._lang.set_language(lang)
-                # Restart application to apply changes
-                self._logger.info(f"Language switched to {lang}, restarting...")
-                self._restart_application()
-            except ValueError as e:
-                messagebox.showerror("Error", str(e))
+                self._current_panel.destroy()
+            except Exception as e:
+                self._logger.warning(f"Error destroying panel: {e}")
 
-    def _restart_application(self) -> None:
-        """Restart the application to apply language changes."""
-        # Store current state
-        # Then restart by destroying and recreating the window
-        # For now, just destroy and let the main loop handle it
-        self._root.destroy()
+        self._current_panel = None
 
-    def _show_default_content(self) -> None:
-        """Show default welcome content."""
-        if not CUSTOMTKINTER_AVAILABLE:
-            label = ttk.Label(
-                self._content_frame,
-                text="Local Network Analyzer\n\nSelect a module from the sidebar to begin.",
-                font=("Arial", 16),
-            )
-            label.pack(expand=True)
-            return
-
-        # CustomTkinter welcome content with neon styling
-        welcome_frame = ctk.CTkFrame(self._content_frame, fg_color="transparent")
-        welcome_frame.pack(expand=True, fill="both", padx=20, pady=20)
-
-        # Main title with neon effect
-        title_label = ctk.CTkLabel(
-            welcome_frame,
-            text="Local Network Analyzer",
-            font=("Fira Code", 36, "bold"),
-            text_color=Colors.NEON.neon_green,
-        )
-        title_label.pack(pady=(40, 10))
-
-        # Subtitle
-        subtitle_label = ctk.CTkLabel(
-            welcome_frame,
-            text="Monitor and analyze your local network traffic",
-            font=("Fira Sans", 16),
-            text_color=Colors.THEME.text_secondary,
-        )
-        subtitle_label.pack(pady=(0, 30))
-
-        # Info message
-        info_label = ctk.CTkLabel(
-            welcome_frame,
-            text="Select a module from the sidebar to begin",
-            font=("Fira Code", 13),
-            text_color=Colors.THEME.text_muted,
-        )
-        info_label.pack(pady=(0, 40))
-
-        # Features in glass cards
-        features_frame = ctk.CTkFrame(welcome_frame, fg_color="transparent")
-        features_frame.pack(pady=20)
-
-        features = [
-            ("📡", "Real-time Packet Capture", "Capture and monitor network packets in real-time"),
-            ("🔍", "Network Scanning", "Discover devices and services on your network"),
-            ("📈", "Traffic Analysis", "Analyze network patterns and protocols"),
-            ("⚠️", "Anomaly Detection", "Detect suspicious activities and threats"),
-        ]
-
-        for i, (icon, title, desc) in enumerate(features):
-            # Create glass-style card for each feature
-            card = ctk.CTkFrame(
-                features_frame,
-                corner_radius=12,
-                fg_color=Colors.GLASS.bg_color,
-                border_width=1,
-                border_color=Colors.THEME.border_default,
-            )
-            card.pack(fill="x", pady=8, padx=(50, 50))
-
-            # Icon and title
-            header = ctk.CTkFrame(card, fg_color="transparent")
-            header.pack(fill="x", padx=15, pady=(12, 6))
-
-            ctk.CTkLabel(
-                header,
-                text=icon,
-                font=("Segoe UI Emoji", 18),
-            ).pack(side="left", padx=(0, 10))
-
-            ctk.CTkLabel(
-                header,
-                text=title,
-                font=("Fira Code", 13, "bold"),
-                text_color=Colors.THEME.text_primary,
-            ).pack(side="left")
-
-            # Description
-            ctk.CTkLabel(
-                card,
-                text=desc,
-                font=("Fira Sans", 11),
-                text_color=Colors.THEME.text_secondary,
-                anchor="w",
-            ).pack(fill="x", padx=15, pady=(0, 12))
+        # Clear only panel widgets from row 0 (preserve status bar in row 1)
+        try:
+            widgets = self._content_frame.winfo_children()
+            for widget in widgets:
+                # Skip status bar frame
+                if widget == self._status_frame:
+                    continue
+                # Check if widget is in row 0 (panel area)
+                try:
+                    grid_info = widget.grid_info()
+                    if grid_info and int(grid_info.get('row', 1)) == 0:
+                        widget.destroy()
+                except Exception:
+                    # If no grid info, try to destroy anyway (but skip status_frame)
+                    if widget != self._status_frame:
+                        try:
+                            widget.destroy()
+                        except Exception as e:
+                            self._logger.debug(f"Error destroying widget: {e}")
+        except Exception as e:
+            self._logger.warning(f"Error clearing content frame: {e}")
 
     def _show_dashboard(self) -> None:
         """Show dashboard panel."""
         self._clear_content_frame()
 
         try:
-            # Create dashboard
             self._current_panel = create_dashboard(
                 parent=self._content_frame,
                 capture=self._capture,
@@ -626,12 +429,11 @@ class MainWindow:
             self._update_status("Error loading dashboard")
 
     def _show_capture(self) -> None:
-        """Show packet capture panel."""
+        """Show capture panel."""
         self._clear_content_frame()
 
         try:
-            # Create capture panel
-            panel = create_capture_panel(
+            self._current_panel = create_capture_panel(
                 parent=self._content_frame,
                 capture=self._capture,
                 analysis=self._analysis,
@@ -640,32 +442,22 @@ class MainWindow:
             )
 
             # Build panel UI
-            panel.build()
+            self._current_panel.build()
 
-            # Restore capture state if one is running
-            # Check if there's an active capture from a previous panel instance
-            if hasattr(self, '_active_capture_state') and self._active_capture_state:
-                panel.restore_capture_state(self._active_capture_state)
-
-            # Save reference to current panel for state restoration
-            self._current_panel = panel
-
-            self._update_status("Capture panel loaded")
+            self._update_status("Capture loaded")
 
         except Exception as e:
             self._logger.error(f"Error loading capture panel: {e}")
             self._update_status("Error loading capture panel")
 
     def _show_scan(self) -> None:
-        """Show network scan panel."""
+        """Show scan panel."""
         self._clear_content_frame()
 
         try:
-            # Create scan panel
             from src.scan import create_network_scanner
 
-            # Always create a new scanner instance if not provided
-            # We don't need to check for capture engine, as scanner is independent
+            # Always create a new scanner instance
             scanner = create_network_scanner()
 
             self._current_panel = create_scan_panel(
@@ -677,7 +469,7 @@ class MainWindow:
             # Build panel UI
             self._current_panel.build()
 
-            self._update_status("Scan panel loaded")
+            self._update_status("Scan loaded")
 
         except Exception as e:
             self._logger.error(f"Error loading scan panel: {e}")
@@ -688,7 +480,6 @@ class MainWindow:
         self._clear_content_frame()
 
         try:
-            # Create analysis panel
             self._current_panel = create_analysis_panel(
                 parent=self._content_frame,
                 analysis=self._analysis,
@@ -698,7 +489,7 @@ class MainWindow:
             # Build panel UI
             self._current_panel.build()
 
-            self._update_status("Analysis panel loaded")
+            self._update_status("Analysis loaded")
 
         except Exception as e:
             self._logger.error(f"Error loading analysis panel: {e}")
@@ -709,7 +500,6 @@ class MainWindow:
         self._clear_content_frame()
 
         try:
-            # Create alert panel
             self._current_panel = create_alert_panel(
                 parent=self._content_frame,
                 detection=self._detection,
@@ -719,36 +509,11 @@ class MainWindow:
             # Build panel UI
             self._current_panel.build()
 
-            self._update_status("Alerts panel loaded")
+            self._update_status("Alerts loaded")
 
         except Exception as e:
-            self._logger.error(f"Error loading alert panel: {e}")
-            self._update_status("Error loading alert panel")
-
-    def _clear_content_frame(self) -> None:
-        """Clear all widgets from content frame."""
-        # Clean up current panel if it has a destroy method
-        if self._current_panel and hasattr(self._current_panel, 'destroy'):
-            try:
-                self._current_panel.destroy()
-            except Exception as e:
-                self._logger.warning(f"Error destroying panel: {e}")
-                # Continue even if destroy fails
-
-        self._current_panel = None
-
-        # Clear all widgets from content frame
-        # Use a more robust approach to handle CustomTkinter widgets
-        try:
-            widgets = self._content_frame.winfo_children()
-            for widget in widgets:
-                try:
-                    widget.destroy()
-                except Exception as e:
-                    # Log but continue with other widgets
-                    self._logger.debug(f"Error destroying widget: {e}")
-        except Exception as e:
-            self._logger.warning(f"Error clearing content frame: {e}")
+            self._logger.error(f"Error loading alerts panel: {e}")
+            self._update_status("Error loading alerts panel")
 
     def _update_status(self, message: str) -> None:
         """Update status bar message.
@@ -776,6 +541,18 @@ class MainWindow:
         """
         if self._alert_count_var:
             self._alert_count_var.set(f"Alerts: {count:,}")
+            # Update badge on tab bar
+            if count > 0:
+                self._tab_bar.set_badge("alerts", str(count) if count > 99 else "99+")
+            else:
+                self._tab_bar.set_badge("alerts", None)
+
+    def _toggle_theme(self) -> None:
+        """Toggle between light and dark theme."""
+        ThemeMode.toggle()
+        # Recreate window to apply new theme
+        self._logger.info(f"Theme toggled to {ThemeMode.get_mode()}")
+        # In a real implementation, you might want to update all widget colors
 
     def set_engines(
         self,
@@ -800,12 +577,15 @@ class MainWindow:
         self._logger.info("Engines configured")
 
     def run(self) -> None:
-        """Run the main application loop."""
+        """Run main application loop."""
         try:
             self._logger.info("Starting main window")
 
             # Setup UI first
             self.setup_ui()
+
+            # Setup tab bar after UI is created
+            self._setup_tab_bar()
 
             # Start mainloop
             self._root.mainloop()
@@ -815,7 +595,7 @@ class MainWindow:
             raise
 
     def quit(self) -> None:
-        """Quit the application.
+        """Quit application.
 
         Stops capture, closes database, and destroys window.
         """

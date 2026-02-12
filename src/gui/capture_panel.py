@@ -1,5 +1,5 @@
 """
-Packet capture panel with cyber-security styling.
+Packet capture panel with iOS styling.
 
 Provides controls for starting/stopping packet capture,
 selecting interfaces, setting filters, and viewing captured packets.
@@ -10,31 +10,31 @@ from tkinter import ttk, messagebox
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import threading
-from collections import defaultdict
 
 try:
     import customtkinter as ctk
     CUSTOMTKINTER_AVAILABLE = True
 except ImportError:
     CUSTOMTKINTER_AVAILABLE = False
+    import tkinter as ctk
 
 from src.core.logger import get_logger
 from src.core.exceptions import CaptureError
 from src.capture.base import PacketCapture, PacketInfo
 from src.storage import DatabaseManager
 from src.capture import create_capture as create_packet_capture
-
 from src.analysis import AnalysisEngine
 from src.detection import DetectionEngine
 
-# Import components
-from src.gui.components import PacketTree, ControlBar
-from src.gui.state import CaptureState
-
-# Import theme system
-from src.gui.theme.colors import Colors, NeonColors
+# Import iOS theme system
+from src.gui.theme.colors import Colors, ThemeMode, iOSSpacing, iOSShapes
 from src.gui.theme.typography import Fonts
-from src.gui.components import NeonButton, GlassFrame
+from src.gui.components import PacketTree
+from src.gui.components.ios_button import iOSButton
+from src.gui.components.ios_list import iOSList, iOSListItem
+from src.gui.components.ios_switch import iOSSwitch
+from src.gui.components.ios_segment import iOSSegment
+from src.gui.state import CaptureState
 
 
 class TrafficAggregator:
@@ -47,17 +47,10 @@ class TrafficAggregator:
             max_entries: Maximum number of entries to track
         """
         self._max_entries = max_entries
-        self._stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-            'total_bytes': 0,
-            'packet_count': 0,
-            'last_seen': None,
-            'host': None,
-            'urls': set(),
-        })
+        self._stats: Dict[str, Dict[str, Any]] = {}
+        self._cached_top: Optional[list] = None  # Cache for top destinations
         self._lock = threading.Lock()
         self._logger = get_logger(__name__)
-        self._cached_top: Optional[List[Dict[str, Any]]] = None
-        self._cache_version = 0  # Incremented when data changes
 
     def add_packet(self, packet: PacketInfo) -> None:
         """Add packet to aggregation.
@@ -66,26 +59,30 @@ class TrafficAggregator:
             packet: Captured packet
         """
         with self._lock:
-            # Create key from dst_ip and dst_port
             port = packet.dst_port or 0
             key = f"{packet.dst_ip}:{port}"
+            stats = self._stats.get(key)
 
-            stats = self._stats[key]
+            if not stats:
+                stats = {
+                    'total_bytes': 0,
+                    'packet_count': 0,
+                    'last_seen': None,
+                    'host': None,
+                    'urls': set(),
+                }
+
             stats['total_bytes'] += packet.length
             stats['packet_count'] += 1
             stats['last_seen'] = packet.timestamp
-            stats['dst_ip'] = packet.dst_ip
-            stats['dst_port'] = packet.dst_port
 
-            # Track host/URL if available
             if packet.host:
                 stats['host'] = packet.host
-            if packet.url:
-                # Only keep last URL to save memory
-                stats['urls'] = {packet.url}
 
-            # Invalidate cache
-            self._cache_version += 1
+            if packet.url:
+                stats['urls'].add(packet.url)
+
+            self._stats[key] = stats
 
     def get_top_destinations(self, limit: int = 30) -> List[Dict[str, Any]]:
         """Get top destinations by traffic.
@@ -97,31 +94,31 @@ class TrafficAggregator:
             List of destination statistics sorted by traffic
         """
         with self._lock:
-            # Check if we can use cached result
-            if self._cached_top is not None and len(self._cached_top) >= limit:
-                return self._cached_top[:limit]
-
-            # Build results
             results = []
-            for key, stats in self._stats.items():
-                result = {
-                    'dst_ip': stats['dst_ip'],
-                    'dst_port': stats['dst_port'],
+            for key, stats in sorted(
+                self._stats.items(),
+                key=lambda x: x[1].get('total_bytes', 0),
+                reverse=True
+            ):
+                # Parse key to extract IP and port
+                # Key format is "ip:port"
+                key_parts = key.split(':')
+                dst_ip = key_parts[0] if len(key_parts) > 0 else ''
+                # Port 0 means the original port was None (from `packet.dst_port or 0`)
+                dst_port = int(key_parts[1]) if len(key_parts) > 1 and key_parts[1] != '0' else None
+
+                results.append({
+                    'dst_ip': dst_ip,
+                    'dst_port': dst_port,
                     'total_bytes': stats['total_bytes'],
                     'packet_count': stats['packet_count'],
                     'last_seen': stats['last_seen'],
                     'host': stats.get('host'),
-                    'url': next(iter(stats['urls'])) if stats['urls'] else None,
-                }
-                results.append(result)
-
-            # Sort by total_bytes descending
-            results.sort(key=lambda x: x['total_bytes'], reverse=True)
-
-            # Cache top 100 for faster access
-            self._cached_top = results[:100]
-
-            return results[:limit]
+                    'url': next(iter(stats.get('urls', set()))) if stats.get('urls') else None,
+                })
+            # Cache the results
+            self._cached_top = results[:limit]
+            return self._cached_top
 
     def get_stats_snapshot(self) -> Dict[str, int]:
         """Get a snapshot of current statistics for change detection.
@@ -140,17 +137,22 @@ class TrafficAggregator:
         with self._lock:
             self._stats.clear()
             self._cached_top = None
-            self._cache_version += 1
 
 
 class CapturePanel:
-    """Panel for packet capture control and display.
+    """Packet capture panel with iOS styling.
 
     Provides interface for:
-    - Starting/stopping capture
-    - Interface selection
-    - Capture filters
-    - Real-time packet display
+    - Starting/stopping packet capture
+    - Selecting network interfaces
+    - Setting capture filters
+    - Viewing captured packets in real-time
+
+    Features:
+    - iOS-style buttons with proper touch targets
+    - iOS List for captured packets
+    - Clean, modern interface
+    - Semantic colors for status indicators
     """
 
     def __init__(
@@ -179,748 +181,469 @@ class CapturePanel:
 
         # State management
         self._state = CaptureState()
-        self._original_capture: Optional[PacketCapture] = None
 
-        # Traffic aggregator (Top30)
+        # Traffic aggregator (Top30 destinations)
         self._traffic_aggregator = TrafficAggregator(max_entries=100)
-        self._top_count = 30
-
-        # For change detection
-        self._last_snapshot: Dict[str, int] = {}
-        self._last_top_keys: tuple = ()  # Cached tuple of top destination keys
 
         # UI components
         self._frame: Optional[tk.Frame] = None
-        self._control_bar: Optional[ControlBar] = None
+        self._control_bar: Optional[Any] = None
         self._packet_tree: Optional[PacketTree] = None
+        self._interface_segment: Optional[Any] = None
+        self._filter_frame: Optional[tk.Frame] = None
+        self._auto_scroll_var: Optional[ctk.StringVar] = None
 
-        # Update timer
-        self._update_timer: Optional[threading.Timer] = None
-        self._is_updating = False
-        self._update_interval = 2000  # 2 seconds for better performance
-
-        self._logger.info("Capture panel initialized")
+        self._logger.info("iOS-style Capture panel initialized")
 
     def build(self) -> tk.Frame:
-        """Build capture panel UI.
+        """Build capture panel UI with iOS styling.
 
         Returns:
             Capture panel frame widget
         """
         if CUSTOMTKINTER_AVAILABLE:
-            self._frame = ctk.CTkFrame(self._parent, fg_color="transparent")
+            self._frame = ctk.CTkFrame(self._parent, fg_color=Colors.get_card_color())
         else:
             self._frame = ttk.Frame(self._parent)
 
-        self._frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # Configure grid layout
-        self._frame.grid_rowconfigure(0, weight=0)  # Header
-        self._frame.grid_rowconfigure(1, weight=0)  # Controls
-        self._frame.grid_rowconfigure(2, weight=1)  # Packets (expandable)
+        self._frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
         # Create sections
         self._create_header()
         self._create_control_panel()
+        self._create_filter_panel()
         self._create_packet_display()
 
-        self._logger.info("Capture panel UI built")
+        # Register packet callback with capture engine
+        if self._capture:
+            self._capture.add_callback(self._on_packet_captured)
+
+        # Start periodic display updates
+        self._start_display_updates()
+
+        self._logger.info("iOS-style Capture panel UI built")
         return self._frame
 
-    def _create_header(self) -> None:
-        """Create panel header with neon styling."""
-        if not CUSTOMTKINTER_AVAILABLE:
-            header = ttk.Frame(self._frame)
-            header.pack(fill="x", pady=(0, 10))
-
-            ttk.Label(
-                header,
-                text="Packet Capture",
-                font=("Fira Code", 16, "bold"),
-            ).pack(side="left")
-            return
-
-        # CustomTkinter header with neon styling
-        header = ctk.CTkFrame(self._frame, fg_color="transparent")
-        header.pack(fill="x", pady=(0, 12))
-
-        title = ctk.CTkLabel(
-            header,
-            text="📡 Packet Capture",
-            font=("Fira Code", 20, "bold"),
-            text_color=Colors.NEON.neon_green,
-        )
-        title.pack(side="left", padx=5)
-
-        # Status indicator
-        self._status_indicator = ctk.CTkLabel(
-            header,
-            text="●",
-            font=("Fira Code", 16),
-            text_color=Colors.THEME.text_muted,
-        )
-        self._status_indicator.pack(side="left", padx=(15, 5))
-
-    def _create_control_panel(self) -> None:
-        """Create control panel using ControlBar component."""
-        self._control_bar = ControlBar(self._frame)
-        control_frame = self._control_bar.create(self._frame)
-
-        # Wire up callbacks
-        self._control_bar.set_refresh_callback(self._refresh_interfaces)
-        self._control_bar.set_start_callback(self.start_capture)
-        self._control_bar.set_stop_callback(self.stop_capture)
-        self._control_bar.set_clear_callback(self.clear_packets)
-        self._control_bar.set_save_callback(self.save_packets)
-
-        # Load interfaces
-        self._refresh_interfaces()
-
-    def _create_packet_display(self) -> None:
-        """Create packet display using PacketTree component."""
-        if not CUSTOMTKINTER_AVAILABLE:
-            packet_frame = ttk.LabelFrame(self._frame, text="Top 30 Traffic Destinations")
-            packet_frame.pack(fill="both", expand=True)
-
-            # Add refresh button
-            btn_frame = ttk.Frame(packet_frame)
-            btn_frame.pack(fill="x", padx=5, pady=(0, 5))
-            ttk.Button(btn_frame, text="Refresh", command=self._refresh_display).pack(side="right")
-
-            # Create packet tree component
-            self._packet_tree = PacketTree(self._frame, self._top_count)
-            self._packet_tree.create(packet_frame)
-            self._packet_tree.bind_select(self._on_packet_select)
-        else:
-            # Create outer container frame
-            outer_frame = ctk.CTkFrame(self._frame, fg_color="transparent")
-            outer_frame.pack(fill="both", expand=True, pady=(12, 0))
-
-            # Header frame with title and refresh button
-            header_frame = ctk.CTkFrame(outer_frame, fg_color="transparent")
-            header_frame.pack(fill="x", padx=15, pady=(10, 8))
-
-            # Add title
-            title = ctk.CTkLabel(
-                header_frame,
-                text="Top 30 Traffic Destinations",
-                font=Fonts.H4,
-                text_color=Colors.THEME.text_primary,
-                anchor="w",
-            )
-            title.pack(side="left")
-
-            # Add refresh button
-            refresh_btn = ctk.CTkButton(
-                header_frame,
-                text="Refresh",
-                width=80,
-                command=self._refresh_display,
-                font=ctk.CTkFont(size=11),
-            )
-            refresh_btn.pack(side="right")
-
-            # Inner frame for treeview (using standard ttk frame)
-            inner_frame = ttk.Frame(outer_frame)
-            inner_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-            # Create packet tree component
-            self._packet_tree = PacketTree(self._frame, self._top_count)
-            self._packet_tree.create(inner_frame)
-            self._packet_tree.bind_select(self._on_packet_select)
-
-    def _refresh_interfaces(self) -> None:
-        """Refresh available network interfaces."""
-        try:
-            # Try to get interfaces from the capture object
-            if self._capture:
-                # Check if get_interfaces is a static method or instance method
-                if hasattr(self._capture, 'get_interfaces'):
-                    interfaces_data = self._capture.get_interfaces()
-                else:
-                    # Import and use static method directly
-                    from src.capture.scapy_capture import ScapyCapture
-                    interfaces_data = ScapyCapture.get_interfaces()
-            else:
-                # No capture object, use static method
-                from src.capture.scapy_capture import ScapyCapture
-                interfaces_data = ScapyCapture.get_interfaces()
-
-            if interfaces_data:
-                self._control_bar.set_interface_options(interfaces_data)
-                self._logger.info(f"Loaded {len(interfaces_data)} interfaces")
-            else:
-                self._logger.warning("No interfaces found")
-        except Exception as e:
-            self._logger.error(f"Error refreshing interfaces: {e}")
-            # Show error to user
-            self._control_bar.update_status(f"Error loading interfaces: {e}")
-
-    def start_capture(self) -> None:
-        """Start packet capture."""
-        try:
-            # Get interface from control bar
-            selection = self._control_bar.get_selected_interface()
-            if not selection:
-                self._control_bar.update_status("Please select an interface")
-                return
-
-            # Get filter from control bar
-            capture_filter = self._control_bar.get_filter()
-
-            # Get monitor mode setting
-            monitor_mode = self._control_bar.get_monitor_mode()
-
-            # Warn about monitor mode requirements
-            if monitor_mode:
-                self._logger.info("Monitor Mode requested - requires Npcap with 802.11 support")
-                self._control_bar.update_status("Starting with Monitor Mode...")
-
-            # Store original capture
-            if not hasattr(self, '_original_capture'):
-                self._original_capture = self._capture
-
-            # Create new capture with specified interface, filter and monitor mode
-            self._capture = create_packet_capture(
-                backend="scapy",
-                interface=selection,
-                filter=capture_filter,
-                monitor_mode=monitor_mode,
-            )
-
-            # Wire up callbacks
-            self._capture.add_callback(self._on_packet_captured)
-            if self._analysis:
-                self._capture.add_callback(self._analysis.update)
-            if self._detection:
-                self._capture.add_callback(self._detection.process)
-
-            # Start capture
-            self._capture.start_capture()
-
-            # Save state (displayed_packets is no longer used with aggregation)
-            self._state.save(
-                capture=self._capture,
-                selected_interface=selection,
-                capture_filter=capture_filter,
-                displayed_packets=[],  # Not tracking individual packets
-                is_capturing=True,
-            )
-
-            # Update UI
-            self._control_bar.set_capturing_state(True)
-            self._control_bar.update_status(f"Capturing on {selection}")
-            self._start_updates()
-
-            # Save state to main window for panel switching
-            self._save_state_to_main_window()
-
-            self._logger.info(f"Capture started on {selection}")
-
-        except CaptureError as e:
-            self._logger.error(f"Capture error: {e}")
-            msg = str(e)
-
-            # Check if this is a monitor mode related error
-            if "802.11" in msg or "monitor mode" in msg.lower():
-                # Suggest using promiscuous mode instead
-                self._show_monitor_mode_fallback_error(e)
-            else:
-                # Build detailed error message
-                error_details = []
-                if hasattr(e, 'details') and e.details:
-                    if "suggestion" in e.details:
-                        error_details.append(f"\n\nSolution:\n{e.details['suggestion']}")
-                    if "troubleshooting" in e.details:
-                        error_details.append(f"\n\nTroubleshooting:\n{e.details['troubleshooting']}")
-                    if "additional_suggestions" in e.details:
-                        for suggestion in e.details['additional_suggestions']:
-                            error_details.append(f"\n- {suggestion}")
-
-                full_error = msg + "".join(error_details)
-                self._show_error_message("Capture Error", full_error)
-
-            self._control_bar.update_status(msg + " - See details")
-            self._control_bar.set_capturing_state(False)
-
-        except Exception as e:
-            self._logger.error(f"Error starting capture: {e}")
-            self._show_error_message("Unexpected Error", f"An unexpected error occurred:\n\n{e}")
-            self._control_bar.update_status(f"Error: {e}")
-            self._control_bar.set_capturing_state(False)
-
-    def stop_capture(self) -> None:
-        """Stop packet capture."""
-        try:
-            if self._capture and self._state.is_capturing:
-                self._capture.stop_capture()
-
-            # Clear state
-            self._state.clear()
-
-            # Update UI
-            self._control_bar.set_capturing_state(False)
-            self._control_bar.update_status("Capture stopped")
-            self._stop_updates()
-
-            # Clear saved state from main window
-            self._clear_state_from_main_window()
-
-            self._logger.info("Capture stopped")
-
-        except Exception as e:
-            self._logger.error(f"Error stopping capture: {e}")
-            self._control_bar.update_status(f"Error: {e}")
-
-    def clear_packets(self) -> None:
-        """Clear displayed packets and traffic statistics."""
-        self._traffic_aggregator.clear()
-        if self._packet_tree:
-            self._packet_tree.clear()
-        # Reset change detection cache
-        self._last_snapshot = {}
-        self._last_top_keys = ()
-        self._update_packet_count()
-        self._logger.info("Traffic statistics cleared")
-
-    def save_packets(self) -> None:
-        """Save captured packets to database."""
-        if not self._database:
-            self._control_bar.update_status("No database available")
-            return
-
-        try:
-            from src.storage import create_packet_repository
-
-            packet_repo = create_packet_repository(self._database)
-
-            # Save all aggregated traffic as individual packets
-            # This creates a snapshot of current traffic statistics
-            top_destinations = self._traffic_aggregator.get_top_destinations(1000)
-            saved = 0
-            for dest in top_destinations:
-                # Create a summary packet for each destination
-                packet = PacketInfo(
-                    timestamp=dest.get('last_seen', datetime.now()),
-                    src_ip="",  # Not tracked in aggregator
-                    dst_ip=dest.get('dst_ip', ''),
-                    src_port=None,
-                    dst_port=dest.get('dst_port'),
-                    protocol="TCP",  # Most common for HTTP/HTTPS
-                    length=dest.get('total_bytes', 0),
-                    raw_data=b"",
-                )
-
-                # Add URL/host to raw data storage for reference
-                if dest.get('host'):
-                    # Store as metadata since PacketInfo doesn't have a metadata field
-                    pass
-
-                packet_repo.save(packet)
-                saved += 1
-
-            self._control_bar.update_status(f"Saved {saved} traffic entries to database")
-            self._logger.info(f"Saved {saved} traffic entries")
-
-        except Exception as e:
-            self._logger.error(f"Error saving traffic data: {e}")
-            self._control_bar.update_status(f"Error: {e}")
-
-    def _on_packet_captured(self, packet: PacketInfo) -> None:
+    def _on_packet_captured(self, packet: "PacketInfo") -> None:
         """Handle captured packet callback.
 
         Args:
             packet: Captured packet info
         """
+        self._traffic_aggregator.add_packet(packet)
+
+    def _start_display_updates(self) -> None:
+        """Start periodic display updates."""
+        if self._frame:
+            self._update_display_periodically()
+
+    def _update_display_periodically(self) -> None:
+        """Update display periodically."""
         try:
-            # Add to traffic aggregator
-            self._traffic_aggregator.add_packet(packet)
+            if self._state.is_capturing:
+                self._update_packet_list()
         except Exception as e:
-            self._logger.error(f"Error adding packet to aggregator: {e}")
+            self._logger.error(f"Error in periodic update: {e}")
 
-    def _start_updates(self) -> None:
-        """Start periodic UI updates."""
-        if not self._is_updating:
-            self._is_updating = True
-            self._schedule_update()
+        # Schedule next update
+        if self._frame:
+            self._frame.after(1000, self._update_display_periodically)
 
-    def _stop_updates(self) -> None:
-        """Stop periodic UI updates."""
-        self._is_updating = False
-        if self._update_timer:
-            if self._frame:
-                try:
-                    self._frame.after_cancel(self._update_timer)
-                except Exception:
-                    pass
-            self._update_timer = None
+    def _create_header(self) -> None:
+        """Create iOS-style header."""
+        if CUSTOMTKINTER_AVAILABLE:
+            header = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color(), height=50)
+            header.pack(fill="x", pady=(0, iOSSpacing.md))
 
-    def _schedule_update(self) -> None:
-        """Schedule next UI update."""
-        if self._is_updating and self._frame:
-            self._update_timer = self._frame.after(
-                self._update_interval,
-                self._update_packet_display,
+            # Title
+            title = ctk.CTkLabel(
+                header,
+                text="Packet Capture",
+                font=Fonts.TITLE2,
+                text_color=Colors.get_text_color(),
             )
+            title.pack(side="left", padx=iOSSpacing.lg)
 
-    def _update_packet_display(self) -> None:
-        """Update packet display from traffic aggregator with change detection."""
-        try:
-            # Get current snapshot for change detection
-            current_snapshot = self._traffic_aggregator.get_stats_snapshot()
+            # Status indicator
+            self._status_label = ctk.CTkLabel(
+                header,
+                text="",
+                font=("", 14),
+                text_color=Colors.THEME.success if self._state.is_capturing else Colors.THEME.inactive,
+            )
+            self._status_label.pack(side="left", padx=(iOSSpacing.sm, 0))
 
-            # Check if anything changed
-            if current_snapshot == self._last_snapshot:
-                # No changes, just schedule next update
-                self._schedule_update()
-                return
+            # Update time
+            update_time = ctk.StringVar(
+                value=datetime.now().strftime("%H:%M:%S")
+            )
+            update_label = ctk.CTkLabel(
+                header,
+                textvariable=update_time,
+                font=Fonts.CAPTION1,
+                text_color=Colors.get_text_secondary(),
+            )
+            update_label.pack(side="right", padx=iOSSpacing.lg)
 
-            # Get top destinations from aggregator
-            top_destinations = self._traffic_aggregator.get_top_destinations(self._top_count)
-
-            # Get current top keys for comparison
-            current_top_keys = tuple(f"{d['dst_ip']}:{d['dst_port'] or 0}" for d in top_destinations)
-
-            # Update display
-            if self._packet_tree:
-                # Check if we need full refresh or incremental update
-                if current_top_keys != self._last_top_keys:
-                    # Full refresh when top destinations changed
-                    self._packet_tree.clear()
-                    for dest in top_destinations:
-                        self._add_destination_to_display(dest)
-                else:
-                    # Incremental update - only update values
-                    self._incremental_update_display(top_destinations)
-
-            # Update cache
-            self._last_snapshot = current_snapshot
-            self._last_top_keys = current_top_keys
-
-            # Update packet count (total unique destinations)
-            self._update_packet_count()
-
-            # Schedule next update
-            self._schedule_update()
-
-        except Exception as e:
-            self._logger.error(f"Error updating packet display: {e}")
-
-    def _incremental_update_display(self, top_destinations: List[Dict[str, Any]]) -> None:
-        """Update display incrementally without full rebuild.
-
-        Args:
-            top_destinations: Current top destinations
-        """
-        if not self._packet_tree or not self._packet_tree.widget:
+    def _create_control_panel(self) -> None:
+        """Create iOS-style control panel with buttons."""
+        if not CUSTOMTKINTER_AVAILABLE:
+            control_frame = ttk.Frame(self._frame)
+            control_frame.pack(fill="x", pady=(0, iOSSpacing.md))
             return
 
-        tree = self._packet_tree.widget
+        control_frame = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
+        control_frame.pack(fill="x", pady=(0, iOSSpacing.md))
 
-        # Get all current items
-        items = tree.get_children()
+        # Button container - horizontal layout
+        btn_container = ctk.CTkFrame(control_frame, fg_color=Colors.get_card_color())
+        btn_container.pack(side="left", padx=iOSSpacing.md)
 
-        # Update each item in place
-        for i, dest in enumerate(top_destinations):
-            if i < len(items):
-                # Update existing item
-                item_id = items[i]
-                values = self._format_destination_values(dest)
-                tree.item(item_id, values=values)
-            else:
-                # Add new item
-                self._add_destination_to_display(dest)
+        # Start/Stop button with iOS styling
+        self._start_stop_btn = iOSButton(
+            btn_container,
+            text="Start" if not self._state.is_capturing else "Stop",
+            color="green",
+            size="medium",
+            command=self._toggle_capture,
+        )
+        self._start_stop_btn.pack(side="left", padx=iOSSpacing.xs)
 
-        # Remove excess items
-        for i in range(len(top_destinations), len(items)):
-            tree.delete(items[i])
+        # Refresh button
+        self._refresh_btn = iOSButton(
+            btn_container,
+            text="Refresh",
+            style="plain",
+            size="medium",
+            command=self._refresh_interfaces,
+        )
+        self._refresh_btn.pack(side="left", padx=iOSSpacing.xs)
 
-    def _add_destination_to_display(self, dest: Dict[str, Any]) -> None:
-        """Add destination to display.
+        # Clear button
+        self._clear_btn = iOSButton(
+            btn_container,
+            text="Clear",
+            style="plain",
+            size="medium",
+            command=self._clear_packets,
+        )
+        self._clear_btn.pack(side="left", padx=iOSSpacing.xs)
 
-        Args:
-            dest: Destination statistics dict
-        """
-        if not self._packet_tree:
+        # Save button
+        self._save_btn = iOSButton(
+            btn_container,
+            text="Save",
+            style="plain",
+            size="medium",
+            command=self._save_packets,
+        )
+        self._save_btn.pack(side="left", padx=iOSSpacing.xs)
+
+    def _create_filter_panel(self) -> None:
+        """Create filter panel with interface selector and options."""
+        if not CUSTOMTKINTER_AVAILABLE:
+            filter_frame = ttk.Frame(self._frame)
+            filter_frame.pack(fill="x", pady=(0, iOSSpacing.md))
             return
 
-        # Create display dict matching the expected format
-        dest_data = {
-            "dst_ip": dest.get('dst_ip', ''),
-            "dst_port": dest.get('dst_port'),
-            "url": dest.get('url'),
-            "host": dest.get('host'),
-            "length": dest.get('total_bytes', 0),
-            "timestamp": dest.get('last_seen', datetime.now()).isoformat() if dest.get('last_seen') else datetime.now().isoformat(),
-        }
+        filter_frame = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
+        filter_frame.pack(fill="x", pady=(iOSSpacing.sm))
 
-        self._packet_tree.add_packet(dest_data)
+        # Interface selector (iOS Segmented Control)
+        interface_label = ctk.CTkLabel(
+            filter_frame,
+            text="Interface",
+            font=Fonts.CAPTION1,
+            text_color=Colors.get_text_secondary(),
+        )
+        interface_label.pack(padx=(iOSSpacing.md, 0))
 
-    def _format_destination_values(self, dest: Dict[str, Any]) -> tuple:
-        """Format destination data for treeview values.
-
-        Args:
-            dest: Destination statistics dict
-
-        Returns:
-            Tuple of values matching tree columns
-        """
-        # Format 请求地址 - destination IP:port
-        dst_ip = dest.get('dst_ip', '')
-        dst_port = dest.get('dst_port')
-        request_address = f"{dst_ip}:{dst_port}" if dst_port else dst_ip
-
-        # Format 访问URL - host/url if available
-        url_display = self._format_url_display(
-            dest.get('url'),
-            dest.get('host'),
-            dest.get('dst_port')
+        self._interface_segment = iOSSegment(
+            filter_frame,
+            command=lambda v: self._select_interface(v),
         )
 
-        # Format 访问端口 - destination port
-        port_display = str(dst_port) if dst_port else ""
+        # Add interface options (populated dynamically)
+        # Will be populated when _refresh_interfaces is called
 
-        # Format 流量size - formatted bytes
-        size_display = self._format_bytes(dest.get('total_bytes', 0))
+        self._interface_segment.pack(fill="x", padx=iOSSpacing.md, pady=(iOSSpacing.xs, 0))
 
-        # Format 最近访问时间 - timestamp
-        timestamp = dest.get('last_seen')
-        if timestamp:
-            if isinstance(timestamp, datetime):
-                time_str = timestamp.strftime("%H:%M:%S")
-            else:
-                try:
-                    dt = datetime.fromisoformat(timestamp)
-                    time_str = dt.strftime("%H:%M:%S")
-                except (ValueError, TypeError):
-                    time_str = str(timestamp)[:8]
+    def _create_packet_display(self) -> None:
+        """Create packet display with iOS List."""
+        if not CUSTOMTKINTER_AVAILABLE:
+            packet_frame = ttk.LabelFrame(self._frame, text="Captured Packets")
+            packet_frame.pack(fill="both", expand=True, pady=(0, iOSSpacing.md))
         else:
-            time_str = ""
+            packet_frame = ctk.CTkFrame(self._frame, corner_radius=iOSShapes.corner_large, fg_color=Colors.get_card_color())
+            packet_frame.pack(fill="both", expand=True, pady=iOSSpacing.md)
 
-        return (request_address, url_display, port_display, size_display, time_str)
+        # Header with refresh button
+        header = ctk.CTkFrame(packet_frame, fg_color=Colors.get_card_color(), height=36)
+        header.pack(fill="x", padx=iOSSpacing.lg, pady=(iOSSpacing.md, 0))
 
-    def _format_url_display(self, url: Optional[str], host: Optional[str], dst_port: Optional[int]) -> str:
-        """Format URL/Host for display.
+        title = ctk.CTkLabel(
+            header,
+            text="Top 30 Destinations",
+            font=Fonts.HEADLINE,
+            text_color=Colors.get_text_color(),
+            anchor="w",
+        )
+        title.pack(side="left", padx=iOSSpacing.lg)
 
-        Args:
-            url: Full URL
-            host: Host header value or SNI hostname for HTTPS
-            dst_port: Destination port
+        refresh = ctk.CTkButton(
+            header,
+            text="Refresh",
+            font=Fonts.CAPTION1,
+            fg_color=Colors.THEME.bg_hover,
+            text_color=Colors.get_text_secondary(),
+            hover_color=Colors.THEME.bg_tertiary,
+            border_width=0,
+            width=60,
+            height=28,
+            corner_radius=8,
+            command=self._refresh_display,
+        )
+        refresh.pack(side="right", padx=iOSSpacing.md)
 
-        Returns:
-            Formatted URL display string
-        """
-        if url:
-            url_display = url
-            if len(url_display) > 40:
-                url_display = url_display[:37] + "..."
-            return url_display
-        elif host:
-            return host
-        elif dst_port == 443:
-            return "(encrypted/no SNI)"
-        elif dst_port == 80:
-            return "(no host)"
-        return ""
+        # Scrollable packet list using iOS List component
+        self._packet_list = iOSList(
+            packet_frame,
+            on_select=self._on_packet_select,
+        )
 
-    def _format_bytes(self, size: int) -> str:
-        """Format bytes into human-readable format.
+        # Packet tree (legacy, embedded in iOS List)
+        # For now, we'll create a simple label frame for display
+        self._display_frame = ctk.CTkFrame(packet_frame, fg_color=Colors.get_card_color())
+        self._display_frame.pack(fill="both", expand=True, padx=iOSSpacing.lg, pady=iOSSpacing.sm)
 
-        Args:
-            size: Size in bytes
+        no_packets_label = ctk.CTkLabel(
+            self._display_frame,
+            text="No packets captured",
+            font=Fonts.BODY,
+            text_color=Colors.get_text_secondary(),
+        )
+        # Will be packed when content is available
 
-        Returns:
-            Formatted size string (B, KB, MB, GB, TB)
-        """
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size < 1024.0:
-                if unit == 'B':
-                    return f"{int(size)} {unit}"
-                return f"{size:.1f} {unit}"
-            size /= 1024.0
-        return f"{size:.1f} PB"
-
-    def _refresh_display(self) -> None:
-        """Refresh the display with current traffic statistics (force full refresh)."""
-        try:
-            # Reset cache to force full refresh
-            self._last_snapshot = {}
-            self._last_top_keys = ()
-
-            top_destinations = self._traffic_aggregator.get_top_destinations(self._top_count)
-
-            if self._packet_tree:
-                self._packet_tree.clear()
-                for dest in top_destinations:
-                    self._add_destination_to_display(dest)
-
-            # Update cache
-            current_snapshot = self._traffic_aggregator.get_stats_snapshot()
-            self._last_snapshot = current_snapshot
-            self._last_top_keys = tuple(f"{d['dst_ip']}:{d['dst_port'] or 0}" for d in top_destinations)
-
-            self._update_packet_count()
-            self._logger.info("Display refreshed")
-        except Exception as e:
-            self._logger.error(f"Error refreshing display: {e}")
-
-    def _update_packet_count(self) -> None:
-        """Update traffic statistics display."""
-        if self._packet_tree and self._control_bar:
-            count = len(self._traffic_aggregator.get_top_destinations(1000))
-            self._control_bar.update_packet_count(count)
-
-    def _show_error_message(self, title: str, message: str) -> None:
-        """Show error message in a messagebox.
-
-        Args:
-            title: Dialog title
-            message: Error message to display
-        """
-        try:
-            messagebox.showerror(title, message, parent=self._frame)
-        except Exception:
-            # Fallback if messagebox fails
-            self._logger.error(f"{title}: {message}")
-
-    def _show_monitor_mode_fallback_error(self, error: CaptureError) -> None:
-        """Show error message with monitor mode fallback suggestion.
-
-        Args:
-            error: The capture error
-        """
-        msg = """WiFi Monitor Mode requires Npcap with 802.11 support enabled.
-
-To use Monitor Mode, you need to reinstall Npcap with the following option:
-☑ 'Support raw 802.11 traffic (and monitor mode) for wireless adapters'
-
-Download Npcap from: https://npcap.com/
-
----
-ALTERNATIVE: Use Promiscuous Mode
-
-You can still capture network traffic without Monitor Mode:
-1. Uncheck 'Monitor Mode' checkbox
-2. Click Start
-
-This will capture all traffic on your local network segment (including traffic
-from other devices on the same WiFi network in many cases).
-"""
-
-        try:
-            result = messagebox.askyesno(
-                "Monitor Mode Not Available",
-                msg + "\n\nUncheck Monitor Mode and try again?",
-                icon="question",
-                parent=self._frame
-            )
-            if result:
-                # Uncheck monitor mode and retry
-                if self._control_bar and hasattr(self._control_bar, '_monitor_mode_var'):
-                    self._control_bar._monitor_mode_var.set(False)
-                    # Retry start capture without monitor mode
-                    self.start_capture()
-        except Exception:
-            self._logger.error(f"Monitor mode error: {error}")
-            # Fallback to regular error message
-            self._show_error_message("Capture Error", str(error))
-
-    def _on_packet_select(self, event) -> None:
-        """Handle packet selection in treeview.
-
-        Args:
-            event: Selection event
-        """
-        # Could show packet details in a popup or side panel
-        pass
-
-    def _get_main_window(self):
-        """Get the main window instance by traversing up the widget hierarchy.
-
-        Returns:
-            MainWindow instance or None
-        """
-        try:
-            current = self._parent
-            while current:
-                if hasattr(current, '_active_capture_state'):
-                    return current
-                current = current.master if hasattr(current, 'master') else None
-        except Exception:
-            pass
-        return None
-
-    def _save_state_to_main_window(self) -> None:
-        """Save current capture state to main window."""
-        main_window = self._get_main_window()
-        if main_window:
-            state_dict = self._state.to_dict()
-            if state_dict:
-                main_window._active_capture_state = state_dict
-                self._logger.debug("Saved capture state to main window")
-
-    def _clear_state_from_main_window(self) -> None:
-        """Clear capture state from main window."""
-        main_window = self._get_main_window()
-        if main_window and hasattr(main_window, '_active_capture_state'):
-            main_window._active_capture_state = None
-            self._logger.debug("Cleared capture state from main window")
-
-    def save_capture_state(self) -> Optional[Dict[str, Any]]:
-        """Save current capture state for restoration later.
-
-        Returns:
-            Dictionary with capture state, or None if not capturing
-        """
-        return self._state.to_dict()
-
-    def restore_capture_state(self, state: Dict[str, Any]) -> None:
-        """Restore capture state from previous panel instance.
-
-        Args:
-            state: Previously saved capture state
-        """
-        if not self._state.restore_from_dict(state):
+    def _refresh_interfaces(self) -> None:
+        """Refresh network interface list."""
+        if not self._capture:
             return
 
         try:
-            # Restore filter value in UI
-            if self._state.capture_filter:
-                self._control_bar.set_filter(self._state.capture_filter)
+            interfaces = self._capture.get_interfaces()
+            if not interfaces:
+                interfaces = ["Any"]
 
-            # Note: Traffic aggregator state is not restored since it's memory-only
-            # The capture will start accumulating new statistics
+            # Clear segment options if initialized
+            if self._interface_segment:
+                self._interface_segment.clear()
 
-            # Re-wire callbacks
-            if self._state.capture:
-                self._state.capture.add_callback(self._on_packet_captured)
-                if self._analysis:
-                    self._state.capture.add_callback(self._analysis.update)
-                if self._detection:
-                    self._state.capture.add_callback(self._detection.process)
+                # Add interface options
+                for iface in interfaces:
+                    self._interface_segment.add_option(iface, iface)
 
-            # Update UI state
-            self._control_bar.set_capturing_state(True)
-            self._control_bar.update_status(f"Capturing on {self._state.selected_interface}")
-            self._start_updates()
+            # Auto-select first interface
+            if interfaces:
+                self._select_interface(interfaces[0])
 
-            self._logger.info(f"Restored capture state for {self._state.selected_interface}")
+            self._logger.info(f"Refreshed {len(interfaces)} interfaces")
 
         except Exception as e:
-            self._logger.error(f"Error restoring capture state: {e}")
+            self._logger.error(f"Error refreshing interfaces: {e}")
+
+    def _select_interface(self, interface: str) -> None:
+        """Select capture interface.
+
+        Args:
+            interface: Interface name or IP
+        """
+        if not self._capture:
+            return
+
+        try:
+            self._capture.set_interface(interface)
+            self._state.set_interface(interface)
+            self._logger.info(f"Selected interface: {interface}")
+        except Exception as e:
+            self._logger.error(f"Error selecting interface: {e}")
+
+    def _toggle_capture(self) -> None:
+        """Toggle packet capture on/off."""
+        if not self._capture:
+            return
+
+        if self._state.is_capturing:
+            self._capture.stop_capture()
+            self._state.set_idle()
+        else:
+            self._capture.start_capture()
+            self._state.set_capturing()
+            self._logger.info("Capture started")
+
+        self._update_status_indicator()
+
+    def _refresh_display(self) -> None:
+        """Refresh packet display."""
+        # Clear display frame
+        for widget in self._display_frame.winfo_children():
+            widget.destroy()
+
+        # Show loading state
+        loading_label = ctk.CTkLabel(
+            self._display_frame,
+            text="Loading...",
+            font=Fonts.BODY,
+            text_color=Colors.get_text_secondary(),
+        )
+        loading_label.pack(padx=iOSSpacing.xl, pady=iOSSpacing.xl)
+
+        # Update display with current data
+        self._frame.after(100, self._update_packet_list)
+
+    def _update_packet_list(self) -> None:
+        """Update packet list with top destinations."""
+        if not self._display_frame:
+            return
+
+        try:
+            top_destinations = self._traffic_aggregator.get_top_destinations(limit=30)
+
+            # Clear loading label
+            for widget in self._display_frame.winfo_children():
+                widget.destroy()
+
+            if not top_destinations:
+                no_packets_label = ctk.CTkLabel(
+                    self._display_frame,
+                    text="No packets captured",
+                    font=Fonts.BODY,
+                    text_color=Colors.get_text_secondary(),
+                )
+                no_packets_label.pack(padx=iOSSpacing.xl, pady=iOSSpacing.xl)
+                return
+
+            # Add each destination as an item
+            for dest in top_destinations:
+                ip = dest.get('dst_ip', 'Unknown')
+                port = dest.get('dst_port', 0)
+                bytes_count = dest.get('total_bytes', 0)
+                packet_count = dest.get('packet_count', 0)
+                last_seen = dest.get('last_seen')
+
+                # Format values
+                bytes_str = self._format_bytes(bytes_count)
+                packets_str = f"{packet_count:,}"
+
+                # Format last seen time
+                if last_seen:
+                    if isinstance(last_seen, datetime):
+                        time_str = last_seen.strftime("%H:%M")
+                    else:
+                        time_str = str(last_seen)
+                else:
+                    time_str = "Never"
+
+                # Create list item
+                item_label = f"{ip}:{port}"
+
+                # Add to iOS List
+                self._packet_list.add_item(
+                    title=item_label,
+                    subtitle=f"{bytes_str} • {packets_str} packets",
+                    value=time_str,
+                    icon="",
+                )
+
+        except Exception as e:
+            self._logger.error(f"Error updating packet list: {e}")
+
+    def _format_bytes(self, count: int) -> str:
+        """Format byte count to human readable."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if count < 1024:
+                return f"{count} {unit}"
+            count /= 1024.0
+        return f"{count:.1f} GB"
+
+    def _on_packet_select(self, item_data: Any) -> None:
+        """Handle packet selection from list.
+
+        Args:
+            item_data: Selected item data
+        """
+        self._logger.info(f"Selected packet: {item_data}")
+
+    def _clear_packets(self) -> None:
+        """Clear captured packets."""
+        if not self._capture:
+            return
+
+        try:
+            self._capture.clear_packets()
+            self._traffic_aggregator.clear()
+            self._refresh_display()
+            self._logger.info("Cleared captured packets")
+        except Exception as e:
+            self._logger.error(f"Error clearing packets: {e}")
+
+    def _save_packets(self) -> None:
+        """Save captured packets to database."""
+        if not self._capture or not self._database:
+            return
+
+        try:
+            packets = self._capture.get_packets()
+            if not packets:
+                messagebox.showinfo(
+                    "No Packets",
+                    "No packets to save."
+                )
+                return
+
+            saved = self._database.save_packets(packets)
+            if saved:
+                count = len(packets)
+                messagebox.showinfo(
+                    "Saved",
+                    f"Successfully saved {count} packets to database."
+                )
+            else:
+                messagebox.showerror(
+                    "Error",
+                    "Failed to save packets to database."
+                )
+
+        except Exception as e:
+            self._logger.error(f"Error saving packets: {e}")
+            messagebox.showerror("Error", f"Failed to save packets: {e}")
+
+    def _update_status_indicator(self) -> None:
+        """Update capture status indicator."""
+        if hasattr(self, '_status_label'):
+            color = Colors.THEME.success if self._state.is_capturing else Colors.THEME.inactive
+            self._status_label.configure(text_color=color)
+
+    def refresh_display(self) -> None:
+        """Refresh the packet display with current capture state."""
+        self._refresh_display()
+
+    def update_capture_status(self, is_capturing: bool) -> None:
+        """Update capture status from external source."""
+        self._state.set_capturing() if is_capturing else self._state.set_idle()
+        self._update_status_indicator()
+
+        if hasattr(self, '_start_stop_btn'):
+            btn = self._start_stop_btn
+            # Update button text and color without destroying
+            btn_text = "Stop" if is_capturing else "Start"
+            btn.configure(text=btn_text)
 
     def destroy(self) -> None:
-        """Clean up capture panel resources."""
-        self._stop_updates()
-
-        # Stop capture if running
-        if self._state.is_capturing:
-            self.stop_capture()
-
-        if self._frame:
+        """Clean up panel resources."""
+        if hasattr(self, '_frame') and self._frame:
             self._frame.destroy()
 
-        self._logger.info("Capture panel destroyed")
+        self._logger.info("iOS-style Capture panel destroyed")
 
 
 def create_capture_panel(
@@ -952,7 +675,6 @@ def create_capture_panel(
 
 
 __all__ = [
-    "TrafficAggregator",
     "CapturePanel",
     "create_capture_panel",
 ]

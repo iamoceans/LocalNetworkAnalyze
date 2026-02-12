@@ -17,7 +17,8 @@ import tkinter as tk
 from tkinter import ttk
 
 # Import theme system
-from src.gui.theme.colors import Colors, NeonColors
+# Import iOS theme system
+from src.gui.theme.colors import Colors, ThemeMode, iOSSpacing
 from src.gui.theme.typography import Fonts
 
 
@@ -210,7 +211,7 @@ class ControlBar:
 
     def _create_ctk_interface_selector(self) -> None:
         """Create CustomTkinter interface selector."""
-        intf_frame = ctk.CTkFrame(self._frame, fg_color="transparent")
+        intf_frame = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
         intf_frame.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
@@ -242,7 +243,7 @@ class ControlBar:
 
     def _create_ctk_filter_entry(self) -> None:
         """Create CustomTkinter filter entry."""
-        filter_frame = ctk.CTkFrame(self._frame, fg_color="transparent")
+        filter_frame = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
         filter_frame.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
@@ -261,7 +262,7 @@ class ControlBar:
 
     def _create_ctk_monitor_mode_option(self) -> None:
         """Create CustomTkinter monitor mode option."""
-        monitor_frame = ctk.CTkFrame(self._frame, fg_color="transparent")
+        monitor_frame = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
         monitor_frame.pack(fill="x", padx=10, pady=5)
 
         self._monitor_mode_var = ctk.BooleanVar(value=False)
@@ -277,10 +278,10 @@ class ControlBar:
 
     def _create_ctk_buttons(self) -> None:
         """Create CustomTkinter buttons with neon styling."""
-        btn_frame = ctk.CTkFrame(self._frame, fg_color="transparent")
+        btn_frame = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
         btn_frame.pack(fill="x", padx=10, pady=6)
 
-        # Start button with neon green
+        # Start button with iOS green
         self._start_button = ctk.CTkButton(
             btn_frame,
             text="▶ Start",
@@ -288,15 +289,15 @@ class ControlBar:
             height=38,
             font=("Fira Code", 12, "bold"),
             command=self._on_start,
-            fg_color=(NeonColors.neon_green, "#00CC33"),
-            hover_color=(NeonColors.neon_green_dim, NeonColors.neon_green_dim),
-            text_color=(Colors.THEME.bg_primary, Colors.THEME.bg_primary),
+            fg_color=Colors.THEME.system_green,
+            hover_color=Colors.THEME.success_bg,
+            text_color=Colors.THEME.bg_primary,
             corner_radius=8,
             border_width=0,
         )
         self._start_button.pack(side="left", padx=4)
 
-        # Stop button with neon red
+        # Stop button with iOS red
         self._stop_button = ctk.CTkButton(
             btn_frame,
             text="⏹ Stop",
@@ -304,9 +305,9 @@ class ControlBar:
             height=38,
             font=("Fira Code", 12, "bold"),
             command=self._on_stop,
-            fg_color=(NeonColors.neon_red, "#CC2929"),
-            hover_color=(NeonColors.neon_red_dim, NeonColors.neon_red_dim),
-            text_color=(Colors.THEME.bg_primary, Colors.THEME.bg_primary),
+            fg_color=Colors.THEME.system_red,
+            hover_color=Colors.THEME.error_bg,
+            text_color=Colors.THEME.bg_primary,
             corner_radius=8,
             border_width=0,
             state="disabled",
@@ -321,16 +322,16 @@ class ControlBar:
             height=38,
             font=("Fira Code", 12),
             command=self._on_clear,
-            fg_color="transparent",
-            hover_color=(Colors.THEME.bg_hover, Colors.THEME.bg_hover),
-            text_color=(Colors.THEME.text_secondary, Colors.THEME.text_secondary),
+            fg_color=Colors.THEME.bg_hover,
+            hover_color=Colors.THEME.bg_tertiary,
+            text_color=Colors.THEME.text_secondary,
             corner_radius=8,
             border_width=1,
             border_color=Colors.THEME.border_default,
         )
         self._clear_button.pack(side="left", padx=4)
 
-        # Save button (cyan)
+        # Save button (blue)
         self._save_button = ctk.CTkButton(
             btn_frame,
             text="Save",
@@ -338,9 +339,9 @@ class ControlBar:
             height=38,
             font=("Fira Code", 12),
             command=self._on_save,
-            fg_color="transparent",
-            hover_color=(NeonColors.neon_cyan_dim, NeonColors.neon_cyan_dim),
-            text_color=(NeonColors.neon_cyan, NeonColors.neon_cyan),
+            fg_color=Colors.THEME.info_bg,
+            hover_color=Colors.THEME.bg_tertiary,
+            text_color=Colors.THEME.info,
             corner_radius=8,
             border_width=1,
             border_color=Colors.THEME.border_default,
@@ -349,7 +350,7 @@ class ControlBar:
 
     def _create_ctk_status_bar(self) -> None:
         """Create CustomTkinter status bar with neon indicators."""
-        status_frame = ctk.CTkFrame(self._frame, fg_color="transparent")
+        status_frame = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
         status_frame.pack(fill="x", padx=10, pady=(6, 10))
 
         self._packet_count_var = ctk.StringVar(value="Packets: 0")
@@ -357,7 +358,7 @@ class ControlBar:
             status_frame,
             textvariable=self._packet_count_var,
             font=("Fira Code", 11),
-            text_color=Colors.NEON.neon_green,
+            text_color=Colors.THEME.system_green,
         ).pack(side="left", padx=5)
 
         self._status_var = ctk.StringVar(value="Ready")

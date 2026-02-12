@@ -93,28 +93,36 @@ class CaptureState:
 
     @property
     def capture(self) -> Optional[PacketCapture]:
-        """Get the capture instance."""
+        """Get capture instance."""
         return self._capture
 
     @property
     def selected_interface(self) -> Optional[str]:
-        """Get the selected interface."""
+        """Get selected interface."""
         return self._selected_interface
 
     @property
     def capture_filter(self) -> str:
-        """Get the capture filter."""
+        """Get capture filter."""
         return self._capture_filter
 
     @property
     def displayed_packets(self) -> List[Dict[str, Any]]:
-        """Get the displayed packets list."""
+        """Get displayed packets list."""
         return self._displayed_packets.copy()
 
     @property
     def is_capturing(self) -> bool:
         """Check if capture is active."""
         return self._is_capturing and self._capture is not None
+
+    def set_capturing(self) -> None:
+        """Set capture state to capturing."""
+        self._is_capturing = True
+
+    def set_idle(self) -> None:
+        """Set capture state to idle."""
+        self._is_capturing = False
 
 
 __all__ = ["CaptureState"]

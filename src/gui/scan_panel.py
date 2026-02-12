@@ -24,8 +24,14 @@ from src.scan import NetworkScannerWrapper as NetworkScanner, create_network_sca
 from src.storage import DatabaseManager
 
 # Import theme system
-from src.gui.theme.colors import Colors, NeonColors
+# Import iOS theme system
+from src.gui.theme.colors import Colors, ThemeMode, iOSSpacing
 from src.gui.theme.typography import Fonts
+from src.gui.components.ios_button import iOSButton
+from src.gui.components.ios_list import iOSList, iOSListItem
+from src.gui.components.ios_switch import iOSSwitch
+from src.gui.components.ios_segment import iOSSegment
+from src.gui.components.ios_progress import iOSActivitySpinner, iOSProgressBar
 
 
 class ScanPanel:
@@ -59,6 +65,7 @@ class ScanPanel:
         # UI state
         self._is_scanning = False
         self._scan_results: List[Dict[str, Any]] = []
+        self._is_destroyed = False  # Track if panel is destroyed
 
         # UI components
         self._frame: Optional[tk.Frame] = None
@@ -87,11 +94,11 @@ class ScanPanel:
             Scan panel frame widget
         """
         if CUSTOMTKINTER_AVAILABLE:
-            self._frame = ctk.CTkFrame(self._parent, fg_color="transparent")
+            self._frame = ctk.CTkFrame(self._parent, fg_color=Colors.get_card_color())
         else:
             self._frame = ttk.Frame(self._parent)
 
-        self._frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self._frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
         # Create sections
         self._create_header()
@@ -114,12 +121,12 @@ class ScanPanel:
             ).pack(side="left")
             return
 
-        # CustomTkinter header with neon styling
+        # CustomTkinter header with iOS styling
         title = ctk.CTkLabel(
             self._frame,
             text="🔍 Network Scanner",
             font=("Fira Code", 20, "bold"),
-            text_color=Colors.NEON.neon_yellow,
+            text_color=Colors.THEME.system_yellow,
         )
         title.pack(pady=(0, 12))
 
@@ -199,7 +206,7 @@ class ScanPanel:
         title.pack(pady=(10, 5))
 
         # Scan type selection
-        type_frame = ctk.CTkFrame(self._control_frame, fg_color="transparent")
+        type_frame = ctk.CTkFrame(self._control_frame, fg_color=Colors.get_card_color())
         type_frame.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
@@ -219,7 +226,7 @@ class ScanPanel:
         self._scan_type_combo.pack(side="left", padx=5)
 
         # Type descriptions
-        desc_frame = ctk.CTkFrame(self._control_frame, fg_color="transparent")
+        desc_frame = ctk.CTkFrame(self._control_frame, fg_color=Colors.get_card_color())
         desc_frame.pack(fill="x", padx=10, pady=2)
 
         self._type_desc_var = ctk.StringVar(value="ARP Scan - Discover hosts on local network")
@@ -231,7 +238,7 @@ class ScanPanel:
         ).pack(side="left", padx=5)
 
         # Target input
-        target_frame = ctk.CTkFrame(self._control_frame, fg_color="transparent")
+        target_frame = ctk.CTkFrame(self._control_frame, fg_color=Colors.get_card_color())
         target_frame.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
@@ -243,13 +250,13 @@ class ScanPanel:
         self._target_var = ctk.StringVar(value="192.168.1.0/24")
         target_entry = ctk.CTkEntry(
             target_frame,
-            variable=self._target_var,
+            textvariable=self._target_var,
             placeholder_text="IP address or CIDR (e.g., 192.168.1.0/24)",
         )
         target_entry.pack(side="left", fill="x", expand=True, padx=5)
 
         # Port input (for port scan)
-        self._ports_frame = ctk.CTkFrame(self._control_frame, fg_color="transparent")
+        self._ports_frame = ctk.CTkFrame(self._control_frame, fg_color=Colors.get_card_color())
         self._ports_frame.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(
@@ -261,7 +268,7 @@ class ScanPanel:
         self._ports_var = ctk.StringVar(value="1-1024")
         ports_entry = ctk.CTkEntry(
             self._ports_frame,
-            variable=self._ports_var,
+            textvariable=self._ports_var,
             placeholder_text="Port range (e.g., 1-1024) or common ports",
         )
         ports_entry.pack(side="left", fill="x", expand=True, padx=5)
@@ -273,7 +280,7 @@ class ScanPanel:
         # self._scan_type_combo.configure(command=self._on_scan_type_changed)
 
         # Control buttons
-        btn_frame = ctk.CTkFrame(self._control_frame, fg_color="transparent")
+        btn_frame = ctk.CTkFrame(self._control_frame, fg_color=Colors.get_card_color())
         btn_frame.pack(fill="x", padx=10, pady=5)
 
         self._start_button = ctk.CTkButton(
@@ -312,7 +319,7 @@ class ScanPanel:
         self._save_button.pack(side="left", padx=5)
 
         # Status bar
-        status_frame = ctk.CTkFrame(self._control_frame, fg_color="transparent")
+        status_frame = ctk.CTkFrame(self._control_frame, fg_color=Colors.get_card_color())
         status_frame.pack(fill="x", padx=10, pady=(5, 10))
 
         self._progress_var = ctk.StringVar(value="")
@@ -661,30 +668,51 @@ class ScanPanel:
         Args:
             result: Scan result dict
         """
+        # Skip if panel is destroyed
+        if self._is_destroyed:
+            return
+
         # Store result
         result["scan_type"] = self._scan_type_var.get()
         self._scan_results.append(result)
 
-        # Add to treeview
-        if hasattr(self, '_results_tree'):
-            ip = result.get("ip", "")
-            hostname = result.get("hostname", "N/A")
-            mac = result.get("mac", "N/A")
-            status = "Alive" if result.get("alive") or result.get("is_alive") else "Down"
-            ports = ", ".join(map(str, result.get("ports", [])))
-            
-            # Handle response_time/latency
-            resp_time = result.get("response_time") or result.get("latency")
-            latency = f"{resp_time:.1f}ms" if resp_time is not None else "N/A"
+        # Add to treeview - check if widget still exists
+        if hasattr(self, '_results_tree') and self._results_tree:
+            try:
+                # Check if treeview widget still exists
+                self._results_tree.winfo_exists()
 
-            self._results_tree.insert("", 0, values=(ip, hostname, mac, status, ports, latency))
+                ip = result.get("ip", "")
+                hostname = result.get("hostname", "N/A")
+                mac = result.get("mac", "N/A")
+                status = "Alive" if (result.get("alive") or result.get("is_alive")) else "Down"
+                ports = ", ".join(map(str, result.get("ports", [])))
+
+                # Handle response_time/latency
+                resp_time = result.get("response_time") or result.get("latency")
+                latency = f"{resp_time:.1f}ms" if resp_time is not None else "N/A"
+
+                self._results_tree.insert("", 0, values=(ip, hostname, mac, status, ports, latency))
+            except tk.TclError:
+                # Widget has been destroyed, ignore
+                pass
 
     def _on_scan_complete(self) -> None:
         """Handle scan completion."""
+        # Skip if panel is destroyed
+        if self._is_destroyed:
+            return
+
         if self._start_button:
-            self._start_button.configure(state="normal")
+            try:
+                self._start_button.configure(state="normal")
+            except Exception:
+                pass
         if self._stop_button:
-            self._stop_button.configure(state="disabled")
+            try:
+                self._stop_button.configure(state="disabled")
+            except Exception:
+                pass
 
     def _update_status(self, message: str) -> None:
         """Update status display.
@@ -692,11 +720,21 @@ class ScanPanel:
         Args:
             message: Status message
         """
+        # Skip if panel is destroyed
+        if self._is_destroyed:
+            return
+
         if self._status_var:
-            self._status_var.set(message)
+            try:
+                self._status_var.set(message)
+            except Exception:
+                pass
 
     def destroy(self) -> None:
         """Clean up scan panel resources."""
+        # Mark as destroyed to prevent further UI updates
+        self._is_destroyed = True
+
         # Stop scan if running
         if self._is_scanning:
             self.stop_scan()

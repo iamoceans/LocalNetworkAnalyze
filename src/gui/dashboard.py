@@ -2,7 +2,7 @@
 Dashboard panel for real-time monitoring.
 
 Provides an at-a-glance view of network activity with live
-statistics, charts, and recent alerts with cyber-security styling.
+statistics, charts, and recent alerts with iOS styling.
 """
 
 import tkinter as tk
@@ -25,17 +25,23 @@ from src.analysis import AnalysisEngine
 from src.detection import DetectionEngine
 from src.storage import DatabaseManager
 
-# Import new theme system
-from src.gui.theme.colors import Colors, NeonColors
+# Import iOS theme system
+from src.gui.theme.colors import Colors, ThemeMode, iOSSpacing, iOSShapes
 from src.gui.theme.typography import Fonts
-from src.gui.components import StatCard, GlassFrame
+from src.gui.components import StatCard, StatGrid
 
 
 class DashboardPanel:
-    """Real-time monitoring dashboard.
+    """Real-time monitoring dashboard with iOS styling.
 
     Displays traffic statistics, bandwidth usage, protocol distribution,
     top connections, and recent alerts.
+
+    Features:
+    - iOS-style stat cards with semantic colors
+    - Clean, modern interface
+    - 44pt touch targets
+    - iOS color scheme (dark/light mode support)
     """
 
     def __init__(
@@ -82,26 +88,25 @@ class DashboardPanel:
 
         # UI components
         self._frame: Optional[tk.Frame] = None
-        self._stat_cards: List[StatCard] = []  # Store stat card references
+        self._stat_cards: List[StatCard] = []
         self._protocol_frame: Optional[tk.Frame] = None
         self._connections_frame: Optional[tk.Frame] = None
         self._alerts_frame: Optional[tk.Frame] = None
-        self._websites_frame: Optional[tk.Frame] = None
 
-        self._logger.info("Dashboard panel initialized")
+        self._logger.info("Dashboard panel initialized (iOS style)")
 
     def build(self) -> tk.Frame:
-        """Build dashboard UI.
+        """Build dashboard UI with iOS styling.
 
         Returns:
             Dashboard frame widget
         """
         if CUSTOMTKINTER_AVAILABLE:
-            self._frame = ctk.CTkFrame(self._parent, fg_color="transparent")
+            self._frame = ctk.CTkFrame(self._parent, fg_color=Colors.get_card_color())
         else:
             self._frame = ttk.Frame(self._parent)
 
-        self._frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self._frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
         # Create sections
         self._create_header()
@@ -111,109 +116,51 @@ class DashboardPanel:
         # Start update timer
         self._start_updates()
 
-        self._logger.info("Dashboard UI built")
+        self._logger.info("iOS-style Dashboard UI built")
         return self._frame
 
     def _create_header(self) -> None:
-        """Create dashboard header with neon styling."""
-        if not CUSTOMTKINTER_AVAILABLE:
-            header = ttk.Frame(self._frame)
-            header.pack(fill="x", pady=(0, 10))
+        """Create iOS-style header."""
+        if CUSTOMTKINTER_AVAILABLE:
+            header = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color(), height=50)
+            header.pack(fill="x", pady=(0, iOSSpacing.md))
 
-            ttk.Label(
+            # Title
+            title = ctk.CTkLabel(
                 header,
-                text="Network Dashboard",
-                font=("Fira Code", 18, "bold"),
-            ).pack(side="left")
+                text="Dashboard",
+                font=Fonts.TITLE2,
+                text_color=Colors.get_text_color(),
+            )
+            title.pack(side="left", padx=iOSSpacing.lg)
 
-            ttk.Label(
+            # Update time
+            self._update_time_var = ctk.StringVar(
+                value=datetime.now().strftime("%H:%M:%S")
+            )
+            update_label = ctk.CTkLabel(
                 header,
-                text=f"Last updated: {datetime.now().strftime('%H:%M:%S')}",
-                font=("Fira Code", 10),
-            ).pack(side="right")
-            return
-
-        # CustomTkinter header with neon styling
-        header = ctk.CTkFrame(self._frame, fg_color="transparent", height=40)
-        header.pack(fill="x", pady=(0, 15))
-        header.pack_propagate(False)
-
-        # Title with neon green
-        title = ctk.CTkLabel(
-            header,
-            text="Network Dashboard",
-            font=("Fira Code", 20, "bold"),
-            text_color=Colors.NEON.neon_green,
-        )
-        title.pack(side="left", padx=10, pady=5)
-
-        self._update_time_var = ctk.StringVar(
-            value=datetime.now().strftime("%H:%M:%S")
-        )
-        update_label = ctk.CTkLabel(
-            header,
-            textvariable=self._update_time_var,
-            font=("Fira Code", 11),
-            text_color=Colors.THEME.text_muted,
-        )
-        update_label.pack(side="right", padx=10, pady=5)
+                textvariable=self._update_time_var,
+                font=Fonts.CAPTION1,
+                text_color=Colors.get_text_secondary(),
+            )
+            update_label.pack(side="right", padx=iOSSpacing.lg)
 
     def _create_statistics_grid(self) -> None:
-        """Create statistics summary grid with neon stat cards."""
-        if not CUSTOMTKINTER_AVAILABLE:
+        """Create statistics summary grid with iOS stat cards."""
+        if CUSTOMTKINTER_AVAILABLE:
+            self._stats_frame = ctk.CTkFrame(self._frame, fg_color=Colors.get_card_color())
+        else:
             self._stats_frame = ttk.LabelFrame(self._frame, text="Statistics")
-            self._stats_frame.pack(fill="x", pady=(0, 10))
 
+        self._stats_frame.pack(fill="x", pady=(0, iOSSpacing.md))
+
+        if CUSTOMTKINTER_AVAILABLE:
+            grid = ctk.CTkFrame(self._stats_frame, fg_color=Colors.get_card_color())
+        else:
             grid = ttk.Frame(self._stats_frame)
-            grid.pack(fill="both", expand=True, padx=5, pady=5)
 
-            # Create 6 stat cards
-            for i, (label, icon) in enumerate([
-                ("Total Packets", "📦"),
-                ("Total Bytes", "💾"),
-                ("Packet Rate", "📊"),
-                ("Byte Rate", "⚡"),
-                ("Active Connections", "🔗"),
-                ("Recent Alerts", "⚠️"),
-            ]):
-                card = ttk.Frame(grid, relief="ridge", borderwidth=1)
-                card.grid(row=i//3, column=i%3, padx=5, pady=5, sticky="nsew")
-
-                ttk.Label(card, text=f"{icon} {label}", font=("Arial", 9)).pack(pady=2)
-
-                value_var = tk.StringVar(value="--")
-                ttk.Label(
-                    card,
-                    textvariable=value_var,
-                    font=("Arial", 14, "bold"),
-                ).pack(pady=2)
-
-                # Store reference
-                if i == 0:
-                    self._total_packets_var = value_var
-                elif i == 1:
-                    self._total_bytes_var = value_var
-                elif i == 2:
-                    self._packet_rate_var = value_var
-                elif i == 3:
-                    self._byte_rate_var = value_var
-                elif i == 4:
-                    self._active_connections_var = value_var
-                elif i == 5:
-                    self._alert_count_var = value_var
-
-            # Configure grid weights
-            for i in range(3):
-                grid.columnconfigure(i, weight=1)
-            return
-
-        # CustomTkinter statistics with StatCard component
-        self._stats_frame = ctk.CTkFrame(self._frame, fg_color="transparent")
-        self._stats_frame.pack(fill="x", pady=(0, 15))
-
-        # Stats grid container
-        grid = ctk.CTkFrame(self._stats_frame, fg_color="transparent")
-        grid.pack(fill="x", padx=10, pady=10)
+        grid.pack(fill="both", expand=True, padx=iOSSpacing.lg, pady=iOSSpacing.lg)
 
         # Define stat configurations
         stats_config = [
@@ -261,7 +208,8 @@ class DashboardPanel:
             },
         ]
 
-        # Create stat cards
+        # Create iOS-style stat cards
+        self._stat_cards = []  # Initialize list before adding cards
         for i, config in enumerate(stats_config):
             card = StatCard(
                 grid,
@@ -269,106 +217,87 @@ class DashboardPanel:
                 label=config["label"],
                 value="--",
                 color=config["color"],
-                size="small",
+                size="medium",
                 compact=True,
             )
-            card.grid(row=i//3, column=i%3, padx=5, pady=5, sticky="nsew")
+            card.grid(row=i // 2, column=i % 2, padx=iOSSpacing.sm, pady=iOSSpacing.sm, sticky="nsew")
 
-            # Store reference
+            # Store reference to both list and named attribute
             self._stat_cards.append(card)
             setattr(self, config["var_ref"], card)
 
         # Configure grid weights
-        for i in range(3):
-            grid.columnconfigure(i, weight=1)
+        for i in range(2):
+            grid.grid_rowconfigure(i, weight=1)
+            grid.grid_columnconfigure(i, weight=1)
 
     def _create_content_area(self) -> None:
-        """Create main content area with glass-effect panels."""
-        if not CUSTOMTKINTER_AVAILABLE:
+        """Create main content area with iOS panels."""
+        if CUSTOMTKINTER_AVAILABLE:
+            content = ctk.CTkFrame(self._frame, corner_radius=0, fg_color=Colors.get_card_color())
+        else:
             content = ttk.Frame(self._frame)
-            content.pack(fill="both", expand=True)
 
-            # Left column - Protocol and Connections
-            left = ttk.Frame(content)
-            left.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        content.pack(fill="both", expand=True, padx=0, pady=(iOSSpacing.md, 0))
 
-            self._protocol_frame = ttk.LabelFrame(left, text="Protocol Distribution")
-            self._protocol_frame.pack(fill="both", expand=True, pady=(0, 5))
-
-            self._connections_frame = ttk.LabelFrame(left, text="Top Connections")
-            self._connections_frame.pack(fill="both", expand=True)
-
-            # Right column - Alerts
-            right = ttk.Frame(content)
-            right.pack(side="right", fill="both", expand=True, padx=(5, 0))
-
-            self._alerts_frame = ttk.LabelFrame(right, text="Recent Alerts")
-            self._alerts_frame.pack(fill="both", expand=True)
-            return
-
-        # CustomTkinter content with glass-effect panels
-        content = ctk.CTkFrame(self._frame, fg_color="transparent")
-        content.pack(fill="both", expand=True)
-
-        # Left column
-        left = ctk.CTkFrame(content, fg_color="transparent")
-        left.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        # Left column - Protocol and Connections
+        left = ctk.CTkFrame(content, fg_color=Colors.get_card_color())
+        left.pack(side="left", fill="both", expand=True, padx=(0, iOSSpacing.md))
 
         self._protocol_frame = ctk.CTkFrame(
             left,
-            corner_radius=12,
-            fg_color=Colors.GLASS.bg_color,
+            corner_radius=iOSShapes.corner_large,
+            fg_color=Colors.get_card_color(),
             border_width=1,
-            border_color=Colors.THEME.border_default,
+            border_color=Colors.THEME.separator,
         )
-        self._protocol_frame.pack(fill="both", expand=True, pady=(0, 8))
+        self._protocol_frame.pack(fill="both", expand=True, pady=(0, iOSSpacing.md))
+
+        protocol_title = ctk.CTkLabel(
+            self._protocol_frame,
+            text="Protocol Distribution",
+            font=Fonts.HEADLINE,
+            text_color=Colors.get_text_color(),
+        )
+        protocol_title.pack(padx=iOSSpacing.lg, pady=(iOSSpacing.md, iOSSpacing.xs))
 
         self._connections_frame = ctk.CTkFrame(
             left,
-            corner_radius=12,
-            fg_color=Colors.GLASS.bg_color,
+            corner_radius=iOSShapes.corner_large,
+            fg_color=Colors.get_card_color(),
             border_width=1,
-            border_color=Colors.THEME.border_default,
+            border_color=Colors.THEME.separator,
         )
-        self._connections_frame.pack(fill="both", expand=True)
+        self._connections_frame.pack(fill="both", expand=True, pady=(0, iOSSpacing.md))
 
-        # Right column - Alerts and Top Websites
-        right = ctk.CTkFrame(content, fg_color="transparent")
-        right.pack(side="right", fill="both", expand=True, padx=(8, 0))
+        connections_title = ctk.CTkLabel(
+            self._connections_frame,
+            text="Top Connections",
+            font=Fonts.HEADLINE,
+            text_color=Colors.get_text_color(),
+        )
+        connections_title.pack(padx=iOSSpacing.lg, pady=(iOSSpacing.md, iOSSpacing.xs))
+
+        # Right column - Alerts
+        right = ctk.CTkFrame(content, fg_color=Colors.get_card_color())
+        right.pack(side="right", fill="both", expand=True, padx=(iOSSpacing.md, 0))
 
         self._alerts_frame = ctk.CTkFrame(
             right,
-            corner_radius=12,
-            fg_color=Colors.GLASS.bg_color,
+            corner_radius=iOSShapes.corner_large,
+            fg_color=Colors.get_card_color(),
             border_width=1,
-            border_color=Colors.THEME.border_default,
+            border_color=Colors.THEME.separator,
         )
-        self._alerts_frame.pack(fill="both", expand=True, pady=(0, 8))
+        self._alerts_frame.pack(fill="both", expand=True, pady=(0, iOSSpacing.md))
 
-        self._websites_frame = ctk.CTkFrame(
-            right,
-            corner_radius=12,
-            fg_color=Colors.GLASS.bg_color,
-            border_width=1,
-            border_color=Colors.THEME.border_default,
+        alerts_title = ctk.CTkLabel(
+            self._alerts_frame,
+            text="Recent Alerts",
+            font=Fonts.HEADLINE,
+            text_color=Colors.get_text_color(),
         )
-        self._websites_frame.pack(fill="both", expand=True)
-
-        # Add titles with neon styling
-        self._add_frame_title(self._protocol_frame, "Protocol Distribution")
-        self._add_frame_title(self._connections_frame, "Top Connections")
-        self._add_frame_title(self._alerts_frame, "Recent Alerts")
-        self._add_frame_title(self._websites_frame, "Top Visited Websites")
-
-    def _add_frame_title(self, frame: tk.Frame, title: str) -> None:
-        """Add title to frame with neon styling."""
-        label = ctk.CTkLabel(
-            frame,
-            text=title,
-            font=("Fira Code", 13, "bold"),
-            text_color=Colors.NEON.neon_cyan,
-        )
-        label.pack(pady=(10, 8))
+        alerts_title.pack(padx=iOSSpacing.lg, pady=(iOSSpacing.md, iOSSpacing.xs))
 
     def _start_updates(self) -> None:
         """Start periodic updates."""
@@ -398,7 +327,7 @@ class DashboardPanel:
     def _update_display(self) -> None:
         """Update dashboard display with latest data."""
         try:
-            # Update stat cards using StatCard.update_value()
+            # Update stat cards
             total_packets = self._get_total_packets()
             total_bytes = self._get_total_bytes()
             packet_rate = self._get_packet_rate()
@@ -406,7 +335,7 @@ class DashboardPanel:
             active_connections = self._get_active_connections()
             alert_count = self._get_alert_count()
 
-            # Update StatCard components (for CustomTkinter)
+            # Update iOS StatCard components
             if self._stat_cards:
                 self._stat_cards[0].update_value(total_packets)
                 self._stat_cards[1].update_value(total_bytes)
@@ -423,7 +352,6 @@ class DashboardPanel:
             self._update_protocol_panel()
             self._update_connections_panel()
             self._update_alerts_panel()
-            self._update_websites_panel()
 
         except Exception as e:
             self._logger.error(f"Error updating dashboard: {e}")
@@ -492,7 +420,6 @@ class DashboardPanel:
         """Get recent alert count."""
         try:
             if self._detection:
-                # Get alerts from last hour
                 since = datetime.now() - timedelta(hours=1)
                 count = self._detection.get_alert_count(since=since)
                 return str(count)
@@ -511,7 +438,7 @@ class DashboardPanel:
         """
         for unit in ["B", "KB", "MB", "GB", "TB"]:
             if bytes_count < 1024.0:
-                return f"{bytes_count:.1f} {unit}"
+                return f"{bytes_count:.0f} {unit}"
             bytes_count /= 1024.0
         return f"{bytes_count:.1f} PB"
 
@@ -521,9 +448,9 @@ class DashboardPanel:
             return
 
         try:
-            # Clear existing content (except title)
+            # Clear existing content
             for widget in self._protocol_frame.winfo_children():
-                if widget.winfo_class() not in ["CTkLabel", "Label"]:
+                if widget.winfo_class() not in ["CTkLabel"]:
                     widget.destroy()
 
             if self._analysis:
@@ -538,36 +465,26 @@ class DashboardPanel:
             self._logger.error(f"Error updating protocol panel: {e}")
 
     def _add_protocol_item(self, protocol: str, count: int) -> None:
-        """Add protocol item to display.
+        """Add protocol item to display."""
+        if CUSTOMTKINTER_AVAILABLE:
+            item = ctk.CTkFrame(self._protocol_frame, height=35, fg_color=Colors.get_card_color())
+            item.pack(fill="x", padx=iOSSpacing.md, pady=2)
 
-        Args:
-            protocol: Protocol name
-            count: Packet count
-        """
-        if not CUSTOMTKINTER_AVAILABLE:
-            frame = ttk.Frame(self._protocol_frame)
-            frame.pack(fill="x", padx=5, pady=2)
+            protocol_label = ctk.CTkLabel(
+                item,
+                text=protocol,
+                font=Fonts.BODY,
+                text_color=Colors.get_text_color(),
+            )
+            protocol_label.pack(side="left", padx=iOSSpacing.md)
 
-            ttk.Label(frame, text=protocol).pack(side="left")
-            ttk.Label(frame, text=str(count)).pack(side="right")
-            return
-
-        # CustomTkinter protocol item
-        item = ctk.CTkFrame(self._protocol_frame, height=30, fg_color="transparent")
-        item.pack(fill="x", padx=10, pady=2)
-        item.pack_propagate(False)
-
-        ctk.CTkLabel(
-            item,
-            text=protocol,
-            font=ctk.CTkFont(size=12),
-        ).pack(side="left", padx=10)
-
-        ctk.CTkLabel(
-            item,
-            text=f"{count:,}",
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(side="right", padx=10)
+            count_label = ctk.CTkLabel(
+                item,
+                text=f"{count:,}",
+                font=Fonts.STAT_MEDIUM,
+                text_color=Colors.get_text_color(),
+            )
+            count_label.pack(side="right", padx=iOSSpacing.md)
 
     def _update_connections_panel(self) -> None:
         """Update top connections panel."""
@@ -577,7 +494,7 @@ class DashboardPanel:
         try:
             # Clear existing content
             for widget in self._connections_frame.winfo_children():
-                if widget.winfo_class() not in ["CTkLabel", "Label"]:
+                if widget.winfo_class() not in ["CTkLabel"]:
                     widget.destroy()
 
             if self._analysis:
@@ -591,44 +508,30 @@ class DashboardPanel:
             self._logger.error(f"Error updating connections panel: {e}")
 
     def _add_connection_item(self, conn: Dict[str, Any]) -> None:
-        """Add connection item to display.
-
-        Args:
-            conn: Connection info dict
-        """
-        if not CUSTOMTKINTER_AVAILABLE:
-            frame = ttk.Frame(self._connections_frame)
-            frame.pack(fill="x", padx=5, pady=2)
+        """Add connection item to display."""
+        if CUSTOMTKINTER_AVAILABLE:
+            item = ctk.CTkFrame(self._connections_frame, height=35, fg_color=Colors.get_card_color())
+            item.pack(fill="x", padx=iOSSpacing.md, pady=2)
 
             src = f"{conn.get('src_ip', '')}:{conn.get('src_port', '')}"
             dst = f"{conn.get('dst_ip', '')}:{conn.get('dst_port', '')}"
             protocol = conn.get('protocol', '')
 
-            ttk.Label(frame, text=f"{src} → {dst}", font=("Arial", 8)).pack(side="left")
-            ttk.Label(frame, text=protocol).pack(side="right")
-            return
+            flow_label = ctk.CTkLabel(
+                item,
+                text=f"{src} → {dst}",
+                font=Fonts.BODY,
+                text_color=Colors.get_text_color(),
+            )
+            flow_label.pack(side="left", padx=iOSSpacing.md)
 
-        # CustomTkinter connection item
-        item = ctk.CTkFrame(self._connections_frame, height=35, fg_color="transparent")
-        item.pack(fill="x", padx=10, pady=2)
-        item.pack_propagate(False)
-
-        src = f"{conn.get('src_ip', '')}:{conn.get('src_port', '')}"
-        dst = f"{conn.get('dst_ip', '')}:{conn.get('dst_port', '')}"
-        protocol = conn.get('protocol', '')
-
-        ctk.CTkLabel(
-            item,
-            text=f"{src} → {dst}",
-            font=ctk.CTkFont(size=10),
-        ).pack(side="left", padx=10)
-
-        ctk.CTkLabel(
-            item,
-            text=protocol,
-            font=ctk.CTkFont(size=10),
-            text_color="gray",
-        ).pack(side="right", padx=10)
+            protocol_label = ctk.CTkLabel(
+                item,
+                text=protocol,
+                font=Fonts.CALLOUT,
+                text_color=Colors.get_text_secondary(),
+            )
+            protocol_label.pack(side="right", padx=iOSSpacing.md)
 
     def _update_alerts_panel(self) -> None:
         """Update recent alerts panel."""
@@ -636,17 +539,22 @@ class DashboardPanel:
             return
 
         try:
-            # Clear existing content (except title)
+            # Clear existing content
             for widget in self._alerts_frame.winfo_children():
-                if widget.winfo_class() not in ["CTkLabel", "Label"]:
+                if widget.winfo_class() not in ["CTkLabel"]:
                     widget.destroy()
 
             if self._detection:
-                # Get recent alerts
                 alerts = self._detection.get_recent_alerts(limit=5)
 
                 if not alerts:
-                    self._add_no_alerts_message()
+                    no_alert_msg = ctk.CTkLabel(
+                        self._alerts_frame,
+                        text="No recent alerts",
+                        font=Fonts.BODY,
+                        text_color=Colors.get_text_secondary(),
+                    )
+                    no_alert_msg.pack(padx=iOSSpacing.lg, pady=iOSSpacing.xl)
                 else:
                     for alert in alerts:
                         self._add_alert_item(alert)
@@ -654,209 +562,56 @@ class DashboardPanel:
         except Exception as e:
             self._logger.error(f"Error updating alerts panel: {e}")
 
-    def _update_websites_panel(self) -> None:
-        """Update top visited websites panel."""
-        if not hasattr(self, '_websites_frame') or not self._websites_frame:
-            return
-
-        try:
-            # Clear existing content (except title)
-            for widget in self._websites_frame.winfo_children():
-                if widget.winfo_class() not in ["CTkLabel", "Label"]:
-                    widget.destroy()
-
-            if self._analysis:
-                # Get top websites
-                top_websites = self._analysis.get_top_websites(limit=10)
-
-                if not top_websites:
-                    self._add_no_data_message(self._websites_frame)
-                else:
-                    # Create a scrollable frame if there are many items
-                    if CUSTOMTKINTER_AVAILABLE:
-                        scroll_frame = ctk.CTkScrollableFrame(self._websites_frame, fg_color="transparent")
-                        scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
-                        parent = scroll_frame
-                    else:
-                        parent = self._websites_frame
-
-                    for site_data in top_websites:
-                        self._add_website_item(parent, site_data)
-
-        except Exception as e:
-            self._logger.error(f"Error updating websites panel: {e}")
-
-    def _add_no_data_message(self, parent) -> None:
-        """Add no data message."""
-        if not CUSTOMTKINTER_AVAILABLE:
-            ttk.Label(
-                parent,
-                text="No data available",
-                font=("Arial", 10, "italic"),
-            ).pack(padx=10, pady=10)
-            return
-
-        ctk.CTkLabel(
-            parent,
-            text="No data available",
-            font=ctk.CTkFont(size=11),
-            text_color="gray",
-        ).pack(pady=20)
-
-    def _add_talker_item(self, parent, ip: str, bytes_count: int) -> None:
-        """Add top talker item to display.
-
-        Args:
-            parent: Parent widget
-            ip: IP address
-            bytes_count: Total bytes
-        """
-        formatted_bytes = self._format_bytes(bytes_count)
-        
-        if not CUSTOMTKINTER_AVAILABLE:
-            frame = ttk.Frame(parent)
-            frame.pack(fill="x", padx=5, pady=2)
-            ttk.Label(frame, text=ip, font=("Arial", 9)).pack(side="left")
-            ttk.Label(frame, text=formatted_bytes, font=("Arial", 9)).pack(side="right")
-            return
-
-        # CustomTkinter item
-        item = ctk.CTkFrame(parent, height=30, fg_color="transparent")
-        item.pack(fill="x", padx=5, pady=2)
-        item.pack_propagate(False)
-
-        ctk.CTkLabel(
-            item,
-            text=ip,
-            font=ctk.CTkFont(size=11),
-        ).pack(side="left", padx=10)
-
-        ctk.CTkLabel(
-            item,
-            text=formatted_bytes,
-            font=ctk.CTkFont(size=11, weight="bold"),
-        ).pack(side="right", padx=10)
-
-    def _add_website_item(self, parent, site_data: Dict[str, any]) -> None:
-        """Add website item to display.
-
-        Args:
-            parent: Parent widget
-            site_data: Dictionary with website statistics
-        """
-        host = site_data.get('host', 'Unknown')
-        request_count = site_data.get('request_count', 0)
-        total_bytes = site_data.get('total_bytes', 0)
-        unique_paths = site_data.get('unique_paths', 0)
-
-        if not CUSTOMTKINTER_AVAILABLE:
-            frame = ttk.Frame(parent)
-            frame.pack(fill="x", padx=5, pady=3)
-            ttk.Label(frame, text=host, font=("Arial", 9, "bold")).pack(side="left")
-            ttk.Label(frame, text=f"{request_count} reqs", font=("Arial", 9)).pack(side="right")
-            return
-
-        # CustomTkinter item
-        item = ctk.CTkFrame(parent, height=45, fg_color="transparent")
-        item.pack(fill="x", padx=5, pady=2)
-        item.pack_propagate(False)
-
-        # Left side - hostname
-        ctk.CTkLabel(
-            item,
-            text=host,
-            font=ctk.CTkFont(size=11, weight="bold"),
-            anchor="w",
-        ).pack(side="left", padx=10, fill="x", expand=True)
-
-        # Right side - stats
-        stats_text = f"{request_count} reqs"
-        if unique_paths > 1:
-            stats_text += f" | {unique_paths} pages"
-
-        ctk.CTkLabel(
-            item,
-            text=stats_text,
-            font=ctk.CTkFont(size=10),
-            text_color="gray",
-        ).pack(side="right", padx=10)
-
-    def _add_no_alerts_message(self) -> None:
-        """Add no alerts message."""
-        if not CUSTOMTKINTER_AVAILABLE:
-            ttk.Label(
-                self._alerts_frame,
-                text="No recent alerts",
-                font=("Arial", 10, "italic"),
-            ).pack(padx=10, pady=10)
-            return
-
-        ctk.CTkLabel(
-            self._alerts_frame,
-            text="No recent alerts",
-            font=ctk.CTkFont(size=11),
-            text_color="gray",
-        ).pack(pady=20)
-
     def _add_alert_item(self, alert: Dict[str, Any]) -> None:
-        """Add alert item to display.
+        """Add alert item to display."""
+        if CUSTOMTKINTER_AVAILABLE:
+            item = ctk.CTkFrame(self._alerts_frame, height=40, fg_color=Colors.get_card_color())
+            item.pack(fill="x", padx=iOSSpacing.md, pady=2)
 
-        Args:
-            alert: Alert info dict
-        """
-        if not CUSTOMTKINTER_AVAILABLE:
-            frame = ttk.Frame(self._alerts_frame)
-            frame.pack(fill="x", padx=5, pady=2)
+            # Severity-based color
+            severity = alert.get('severity', 'unknown')
+            severity_colors = {
+                "critical": Colors.THEME.critical,
+                "high": Colors.THEME.high,
+                "medium": Colors.THEME.medium,
+                "low": Colors.THEME.low,
+            }
+            bg_color = severity_colors.get(severity, Colors.THEME.low_bg)
 
             title = alert.get('title', 'Unknown Alert')
-            severity = alert.get('severity', 'unknown')
             timestamp = alert.get('timestamp', datetime.now())
 
             if isinstance(timestamp, datetime):
-                time_str = timestamp.strftime("%H:%M:%S")
+                time_str = timestamp.strftime("%H:%M")
             else:
                 time_str = str(timestamp)
 
-            ttk.Label(frame, text=title, font=("Arial", 9)).pack(side="left")
-            ttk.Label(frame, text=f"{severity} ({time_str})", font=("Arial", 8)).pack(side="right")
-            return
+            title_label = ctk.CTkLabel(
+                item,
+                text=title,
+                font=Fonts.BODY,
+                text_color=Colors.get_text_color(),
+                anchor="w",
+            )
+            title_label.pack(side="left", padx=iOSSpacing.md, fill="x")
 
-        # CustomTkinter alert item
-        item = ctk.CTkFrame(self._alerts_frame, height=40, fg_color="transparent")
-        item.pack(fill="x", padx=10, pady=2)
-        item.pack_propagate(False)
+            severity_label = ctk.CTkLabel(
+                item,
+                text=f"{severity.upper()}",
+                font=Fonts.CAPTION1,
+                text_color=bg_color,
+                fg_color="white" if ThemeMode.is_dark() else Colors.THEME.light_text_primary,
+                corner_radius=4,
+            )
+            severity_label.pack(side="right", padx=iOSSpacing.md)
 
-        title = alert.get('title', 'Unknown Alert')
-        severity = alert.get('severity', 'unknown')
-        timestamp = alert.get('timestamp', datetime.now())
-
-        if isinstance(timestamp, datetime):
-            time_str = timestamp.strftime("%H:%M:%S")
-        else:
-            time_str = str(timestamp)
-
-        # Color based on severity
-        severity_colors = {
-            "critical": "#ff4757",
-            "high": "#ff6b81",
-            "medium": "#ffa502",
-            "low": "#7bed9f",
-        }
-        color = severity_colors.get(severity.lower(), "gray")
-
-        ctk.CTkLabel(
-            item,
-            text=title,
-            font=ctk.CTkFont(size=11),
-            anchor="w",
-        ).pack(side="left", padx=10, fill="x", expand=True)
-
-        ctk.CTkLabel(
-            item,
-            text=f"{severity.upper()}",
-            font=ctk.CTkFont(size=9, weight="bold"),
-            text_color=color,
-        ).pack(side="right", padx=5)
+            time_label = ctk.CTkLabel(
+                item,
+                text=time_str,
+                font=Fonts.CAPTION1,
+                text_color=Colors.get_text_secondary(),
+            )
+            time_label.pack(side="right", padx=iOSSpacing.md)
 
     def destroy(self) -> None:
         """Clean up dashboard resources."""
@@ -865,7 +620,7 @@ class DashboardPanel:
         if self._frame:
             self._frame.destroy()
 
-        self._logger.info("Dashboard destroyed")
+        self._logger.info("iOS-style Dashboard destroyed")
 
 
 def create_dashboard(

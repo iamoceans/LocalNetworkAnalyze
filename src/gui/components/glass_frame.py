@@ -1,8 +1,8 @@
 """
-Glassmorphism frame component for Local Network Analyzer.
+iOS-style Card component for Local Network Analyzer.
 
-Provides a frosted glass effect with configurable blur,
-transparency, and subtle borders.
+Provides cards following iOS design guidelines with
+proper corner radius, background colors, and subtle borders.
 """
 
 import logging
@@ -21,22 +21,23 @@ except ImportError:
 import tkinter as tk
 from tkinter import ttk
 
-from src.gui.theme.colors import Colors, GlassConfig
+from src.gui.theme.colors import Colors, ThemeMode, iOSShapes, iOSSpacing, iOSCardConfig
+from src.gui.theme.typography import Fonts
 
 
-class GlassFrame(ctk.CTkFrame):
-    """A frame with glassmorphism visual effect.
+class iOSCard(ctk.CTkFrame):
+    """iOS-style card component.
 
     Features:
-    - Semi-transparent background
-    - Subtle border
-    - Rounded corners
-    - Configurable blur effect (simulated via transparency)
-    - Optional neon glow
+    - 12pt corner radius (iOS large corner)
+    - Subtle border (0.5pt separator color)
+    - Card background color
+    - Optional hover effect
 
     Example:
-        frame = GlassFrame(parent, glow="green")
-        frame.pack(fill="both", expand=True)
+        card = iOSCard(parent)
+        content.pack()
+        card.pack()
     """
 
     def __init__(
@@ -47,41 +48,34 @@ class GlassFrame(ctk.CTkFrame):
         corner_radius: Optional[int] = None,
         border_width: Optional[int] = None,
         bg_color: Optional[str] = None,
-        fg_color: Optional[str] = None,
-        glow: str = "none",  # none, green, red, cyan, yellow, orange
         hover: bool = False,
         **kwargs
     ):
-        """Initialize glass frame.
+        """Initialize iOS card.
 
         Args:
             master: Parent widget
-            width: Frame width
-            height: Frame height
-            corner_radius: Border radius (defaults to theme)
-            border_width: Border width (defaults to theme)
-            bg_color: Background color (defaults to transparent)
-            fg_color: Foreground color (auto-generated glass effect)
-            glow: Glow effect (none, green, red, cyan, yellow, orange)
+            width: Card width
+            height: Card height
+            corner_radius: Border radius (defaults to iOS spec)
+            border_width: Border width (defaults to iOS spec)
+            bg_color: Card background (auto from theme)
             hover: Enable hover effect
             **kwargs: Additional arguments passed to CTkFrame
         """
-        self._glow = glow
         self._hover_enabled = hover
-        self._original_fg_color = None
-        self._border_color = "#1A202C"
+        self._original_bg_color = None
+        self._border_color = Colors.THEME.separator
 
-        # Set defaults from theme
+        # Set defaults from iOS theme
         if corner_radius is None:
-            corner_radius = Colors.GLASS.border_radius
+            corner_radius = iOSShapes.corner_large
         if border_width is None:
-            border_width = Colors.GLASS.border_width
+            border_width = 1
         if bg_color is None:
-            bg_color = "transparent"
-        if fg_color is None:
-            fg_color = self._get_glass_color()
+            bg_color = Colors.get_card_color()
 
-        self._original_fg_color = fg_color
+        self._original_bg_color = bg_color
 
         super().__init__(
             master,
@@ -89,54 +83,15 @@ class GlassFrame(ctk.CTkFrame):
             height=height,
             corner_radius=corner_radius,
             border_width=border_width,
-            bg_color=bg_color,
-            fg_color=fg_color,
+            border_color=self._border_color,
+            fg_color=bg_color,
             **kwargs
         )
-
-        # Apply border color
-        self._configure_border()
 
         # Apply hover effect if enabled
         if hover:
             self.bind("<Enter>", self._on_enter)
             self.bind("<Leave>", self._on_leave)
-
-    def _get_glass_color(self) -> str:
-        """Get glass effect foreground color.
-
-        Returns:
-            Color string for glass effect
-        """
-        return Colors.GLASS.bg_color
-
-    def _configure_border(self) -> None:
-        """Configure the border color based on glow setting."""
-        # Note: Border colors with glow are not directly applied in CustomTkinter
-        # as it doesn't support dynamic border coloring. The glow effect
-        # is simulated through the overall design theme.
-        if self._glow == "none":
-            border_color = Colors.GLASS.border_color
-        elif self._glow == "green":
-            border_color = Colors.NEON.neon_green_dim
-        elif self._glow == "red":
-            border_color = Colors.NEON.neon_red_dim
-        elif self._glow == "cyan":
-            border_color = Colors.NEON.neon_cyan_dim
-        elif self._glow == "yellow":
-            border_color = Colors.NEON.neon_yellow_dim
-        elif self._glow == "orange":
-            border_color = Colors.NEON.neon_orange_dim
-        else:
-            border_color = Colors.GLASS.border_color
-
-        # For CustomTkinter, border color is handled at initialization
-        # and cannot be changed dynamically. The glow effect is visual only.
-        try:
-            # Store the border color for potential future use
-            self._border_color = border_color
-        except Exception as e:
-            logger.debug(f"Failed to configure border color: {e}")
 
     def _on_enter(self, event) -> None:
         """Handle mouse enter for hover effect.
@@ -144,9 +99,9 @@ class GlassFrame(ctk.CTkFrame):
         Args:
             event: Mouse event
         """
-        if self._hover_enabled and self._original_fg_color:
-            # Lighten the glass effect
-            lighter_color = self._adjust_brightness(self._original_fg_color, 0.1)
+        if self._hover_enabled and self._original_bg_color:
+            # Lighten for hover (simulated iOS lift effect)
+            lighter_color = self._adjust_brightness(self._original_bg_color, 0.1)
             self.configure(fg_color=lighter_color)
 
     def _on_leave(self, event) -> None:
@@ -155,24 +110,19 @@ class GlassFrame(ctk.CTkFrame):
         Args:
             event: Mouse event
         """
-        if self._hover_enabled and self._original_fg_color:
-            self.configure(fg_color=self._original_fg_color)
+        if self._hover_enabled and self._original_bg_color:
+            self.configure(fg_color=self._original_bg_color)
 
     def _adjust_brightness(self, hex_color: str, factor: float) -> str:
         """Adjust brightness of a hex color.
 
         Args:
-            hex_color: Hex color string (e.g., "#RRGGBB" or "rgba(...)")
+            hex_color: Hex color string (e.g., "#RRGGBB")
             factor: Brightness adjustment factor (-1 to 1)
 
         Returns:
             Adjusted hex color string
         """
-        # Handle rgba colors
-        if hex_color.startswith("rgba"):
-            return hex_color  # Can't easily adjust rgba
-
-        # Handle hex colors
         if hex_color.startswith("#"):
             hex_color = hex_color[1:]
 
@@ -192,21 +142,11 @@ class GlassFrame(ctk.CTkFrame):
         except (ValueError, IndexError):
             return hex_color
 
-    def set_glow(self, glow: str) -> None:
-        """Change the glow effect.
 
-        Args:
-            glow: Glow type (none, green, red, cyan, yellow, orange)
-        """
-        self._glow = glow
-        self._configure_border()
+class iOSLabel(ctk.CTkLabel):
+    """iOS-styled label component.
 
-
-class GlassLabel(ctk.CTkLabel):
-    """A label with glassmorphism background.
-
-    Provides a lightweight alternative to full glass frames
-    for simple label elements.
+    Provides labels with iOS colors and typography.
     """
 
     def __init__(
@@ -214,22 +154,31 @@ class GlassLabel(ctk.CTkLabel):
         master: Any,
         text: str = "",
         corner_radius: Optional[int] = None,
+        fg_color: Optional[str] = None,
+        text_color: Optional[str] = None,
+        font: Optional[Any] = None,
         **kwargs
     ):
-        """Initialize glass label.
+        """Initialize iOS label.
 
         Args:
             master: Parent widget
             text: Label text
             corner_radius: Border radius
-            **kwargs: Additional arguments passed to CTkLabel
+            fg_color: Background color
+            text_color: Text color
+            font: Font tuple
+            **kwargs: Additional arguments
         """
+        # Set defaults from theme
         if corner_radius is None:
-            corner_radius = 8
-
-        # Set glass-like colors
-        fg_color = kwargs.pop("fg_color", Colors.GLASS.bg_color)
-        text_color = kwargs.pop("text_color", Colors.THEME.text_primary)
+            corner_radius = iOSShapes.corner_small
+        if fg_color is None:
+            fg_color = Colors.get_card_color()
+        if text_color is None:
+            text_color = Colors.get_text_color()
+        if font is None:
+            font = Fonts.BODY
 
         super().__init__(
             master,
@@ -237,38 +186,81 @@ class GlassLabel(ctk.CTkLabel):
             corner_radius=corner_radius,
             fg_color=fg_color,
             text_color=text_color,
+            font=font,
             **kwargs
         )
 
 
+# Maintain old names for backward compatibility
+GlassFrame = iOSCard
+GlassLabel = iOSLabel
+
+
 # Fallback for standard tkinter
 if not CUSTOMTKINTER_AVAILABLE:
-    class TkGlassFrame(ttk.Frame):
-        """Fallback glass frame for standard tkinter."""
+    class TkiOSCard(ttk.Frame):
+        """Fallback card for standard tkinter."""
 
         def __init__(
             self,
             master: Any,
-            glow: str = "none",
+            width: int = 200,
+            height: int = 200,
+            corner_radius: Optional[int] = None,
+            border_width: Optional[int] = None,
+            bg_color: Optional[str] = None,
             hover: bool = False,
             **kwargs
         ):
             style = ttk.Style()
             style.configure(
-                "Glass.TFrame",
-                background=Colors.THEME.bg_card,
+                "iOS.TFrame",
+                background=bg_color or Colors.get_card_color(),
                 relief="flat",
-                borderwidth=1,
+                borderwidth=border_width or 1,
             )
-            super().__init__(master, style="Glass.TFrame", **kwargs)
-            self._glow = glow
-            self._hover_enabled = hover
+            super().__init__(master, style="iOS.TFrame", width=width, height=height, **kwargs)
 
-    GlassFrame = TkGlassFrame
-    GlassLabel = ttk.Label
+            if hover:
+                self.bind("<Enter>", self._on_enter)
+                self.bind("<Leave>", self._on_leave)
+
+        def _on_enter(self, event):
+            # Hover effect not easily supported in ttk
+            pass
+
+        def _on_leave(self, event):
+            pass
+
+    class TkiOSLabel(ttk.Label):
+        """Fallback label for standard tkinter."""
+
+        def __init__(
+            self,
+            master: Any,
+            text: str = "",
+            corner_radius: Optional[int] = None,
+            fg_color: Optional[str] = None,
+            text_color: Optional[str] = None,
+            font: Optional[Any] = None,
+            **kwargs
+        ):
+            super().__init__(
+                master,
+                text=text,
+                background=fg_color or Colors.get_card_color(),
+                foreground=text_color or Colors.get_text_color(),
+                font=font or Fonts.BODY,
+                **kwargs
+            )
+
+    GlassFrame = TkiOSCard
+    GlassLabel = TkiOSLabel
 
 
 __all__ = [
-    "GlassFrame",
-    "GlassLabel",
+    "iOSCard",
+    "iOSLabel",
+    "GlassFrame",  # Legacy alias
+    "GlassLabel",  # Legacy alias
 ]
